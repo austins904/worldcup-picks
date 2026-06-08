@@ -256,6 +256,7 @@ export default function App() {
   const [groupMatches, setGroupMatchesState] = useState(generateGroupMatches());
   const [knockoutMatches, setKnockoutMatchesState] = useState(generateKnockoutMatches());
   const [picks, setPicksState] = useState({}); // { playerName: { matchId: result } }
+  const [pins, setPinsState] = useState({}); // { playerName: "1234" }
   const [knockoutOpen, setKnockoutOpenState] = useState(false);
   const [knockoutLocked, setKnockoutLockedState] = useState(false);
   const [activeTab, setActiveTab] = useState("groups");
@@ -263,13 +264,14 @@ export default function App() {
   // Load from storage
   useEffect(() => {
     (async () => {
-      const [p, gm, km, pk, ko, kl] = await Promise.all([
+      const [p, gm, km, pk, ko, kl, pn] = await Promise.all([
         loadState("wc_players"),
         loadState("wc_group_matches"),
         loadState("wc_knockout_matches"),
         loadState("wc_picks"),
         loadState("wc_knockout_open"),
         loadState("wc_knockout_locked"),
+        loadState("wc_pins"),
       ]);
       if (p) setPlayersState(p);
       if (gm) setGroupMatchesState(gm);
@@ -277,6 +279,7 @@ export default function App() {
       if (pk) setPicksState(pk);
       if (ko !== null) setKnockoutOpenState(ko);
       if (kl !== null) setKnockoutLockedState(kl);
+      if (pn) setPinsState(pn);
       setLoading(false);
     })();
   }, []);
@@ -288,6 +291,7 @@ export default function App() {
   const setPicks = (v) => { setPicksState(v); saveState("wc_picks", v); };
   const setKnockoutOpen = (v) => { setKnockoutOpenState(v); saveState("wc_knockout_open", v); };
   const setKnockoutLocked = (v) => { setKnockoutLockedState(v); saveState("wc_knockout_locked", v); };
+  const setPins = (v) => { setPinsState(v); saveState("wc_pins", v); };
 
   const allMatches = [...groupMatches, ...knockoutMatches];
 
@@ -300,10 +304,15 @@ export default function App() {
   if (view === "login") return (
     <LoginScreen
       players={players}
+      pins={pins}
       onLogin={(name, isAdmin) => {
         setCurrentUser({ name, isAdmin });
         setView(isAdmin ? "commissioner" : "player");
         setActiveTab("groups");
+      }}
+      onSetPin={(name, pin) => {
+        const updated = { ...pins, [name]: pin };
+        setPins(updated);
       }}
       onAddPlayer={(name) => {
         if (!players.includes(name)) setPlayers([...players, name]);
@@ -338,6 +347,8 @@ export default function App() {
       activeTab={activeTab}
       setActiveTab={setActiveTab}
       addPlayer={(name) => { if (!players.includes(name)) setPlayers([...players, name]); }}
+      pins={pins}
+      onResetPin={(name) => { const updated = { ...pins }; delete updated[name]; setPins(updated); }}
     />
   );
 
@@ -364,14 +375,55 @@ export default function App() {
 }
 
 // ── LOGIN ──────────────────────────────────────────────────────────────────
-function LoginScreen({ players, onLogin, onAddPlayer }) {
+function LoginScreen({ players, pins, onLogin, onSetPin, onAddPlayer }) {
   const [name, setName] = useState("");
   const [newPlayer, setNewPlayer] = useState("");
   const [adminPw, setAdminPw] = useState("");
   const [adminMode, setAdminMode] = useState(false);
   const [err, setErr] = useState("");
 
+  // PIN flow: null | "create" | "confirm" | "enter"
+  const [pinStep, setPinStep] = useState(null);
+  const [pinVal, setPinVal] = useState("");
+  const [pinConfirm, setPinConfirm] = useState("");
+
   const ADMIN_PW = "soccer2026";
+
+  const handleSelectPlayer = (selectedName) => {
+    setName(selectedName);
+    setErr("");
+    setPinVal("");
+    setPinConfirm("");
+    if (!selectedName) { setPinStep(null); return; }
+    if (pins[selectedName]) {
+      setPinStep("enter");
+    } else {
+      setPinStep("create");
+    }
+  };
+
+  const handlePinInput = (val, setter) => {
+    if (/^\d{0,4}$/.test(val)) setter(val);
+  };
+
+  const handlePinSubmit = () => {
+    if (pinStep === "create") {
+      if (pinVal.length !== 4) { setErr("PIN must be 4 digits."); return; }
+      setPinStep("confirm");
+      setErr("");
+    } else if (pinStep === "confirm") {
+      if (pinVal !== pinConfirm) { setErr("PINs don't match. Try again."); setPinConfirm(""); return; }
+      onSetPin(name, pinVal);
+      onLogin(name, false);
+    } else if (pinStep === "enter") {
+      if (pinVal === pins[name]) {
+        onLogin(name, false);
+      } else {
+        setErr("Wrong PIN.");
+        setPinVal("");
+      }
+    }
+  };
 
   const handleLogin = () => {
     if (adminMode) {
@@ -379,10 +431,16 @@ function LoginScreen({ players, onLogin, onAddPlayer }) {
       else setErr("Wrong password.");
       return;
     }
-    if (!name.trim()) { setErr("Enter your name."); return; }
-    if (!players.includes(name.trim())) { setErr("Name not found. Ask the commissioner to add you."); return; }
-    onLogin(name.trim(), false);
+    if (!name.trim()) { setErr("Select your name."); return; }
+    handlePinSubmit();
   };
+
+  const pinLabel = pinStep === "create" ? "Create a 4-digit PIN"
+    : pinStep === "confirm" ? "Confirm your PIN"
+    : "Enter your PIN";
+
+  const pinValue = pinStep === "confirm" ? pinConfirm : pinVal;
+  const pinSetter = pinStep === "confirm" ? setPinConfirm : setPinVal;
 
   return (
     <div style={{ background: C.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bebas Neue', 'Arial Black', sans-serif" }}>
@@ -402,14 +460,65 @@ function LoginScreen({ players, onLogin, onAddPlayer }) {
               <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: C.textDim, marginBottom: 16, fontWeight: 600, letterSpacing: 1 }}>PLAYER LOGIN</div>
               <select
                 value={name}
-                onChange={e => { setName(e.target.value); setErr(""); }}
+                onChange={e => handleSelectPlayer(e.target.value)}
                 style={{ width: "100%", padding: "10px 12px", background: C.surface, color: name ? C.text : C.muted, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 15, fontFamily: "Inter, sans-serif", marginBottom: 12, boxSizing: "border-box" }}
               >
                 <option value="">— Select your name —</option>
                 {players.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
+
+              {pinStep && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: C.textDim, marginBottom: 8, fontWeight: 600 }}>
+                    {pinStep === "create" && "🔐 First time? Create a 4-digit PIN to protect your picks."}
+                    {pinStep === "confirm" && "✅ Confirm your PIN"}
+                    {pinStep === "enter" && "🔐 Enter your PIN"}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 4 }}>
+                    {[0,1,2,3].map(i => (
+                      <div key={i} style={{
+                        width: 48, height: 56, borderRadius: 10, background: C.surface,
+                        border: `2px solid ${pinValue.length > i ? C.accent : C.border}`,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 24, color: C.text, fontWeight: 700,
+                      }}>
+                        {pinValue.length > i ? "●" : ""}
+                      </div>
+                    ))}
+                  </div>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    maxLength={4}
+                    value={pinValue}
+                    onChange={e => handlePinInput(e.target.value, pinSetter)}
+                    onKeyDown={e => e.key === "Enter" && handleLogin()}
+                    style={{ opacity: 0, position: "absolute", pointerEvents: "none" }}
+                    autoFocus
+                  />
+                  {/* Tap-friendly number pad */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 12 }}>
+                    {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((k, i) => (
+                      <button key={i} onClick={() => {
+                        if (k === "⌫") pinSetter(v => v.slice(0,-1));
+                        else if (k !== "" && pinValue.length < 4) pinSetter(v => v + k);
+                      }} style={{
+                        padding: "14px 0", borderRadius: 10, fontSize: 20, fontWeight: 700,
+                        background: k === "" ? "transparent" : C.surface,
+                        border: `1px solid ${k === "" ? "transparent" : C.border}`,
+                        color: C.text, cursor: k === "" ? "default" : "pointer",
+                        fontFamily: "Inter, sans-serif",
+                      }}>{k}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {err && <div style={{ color: C.red, fontSize: 13, fontFamily: "Inter, sans-serif", marginBottom: 10 }}>{err}</div>}
-              <Btn onClick={handleLogin} style={{ width: "100%" }}>ENTER</Btn>
+              {pinStep && <Btn onClick={handleLogin} style={{ width: "100%", marginTop: 8 }}>
+                {pinStep === "create" ? "SET PIN" : pinStep === "confirm" ? "CONFIRM PIN" : "ENTER"}
+              </Btn>}
+              {!pinStep && name && <Btn onClick={handleLogin} style={{ width: "100%" }}>ENTER</Btn>}
               <div style={{ textAlign: "center", marginTop: 20 }}>
                 <button onClick={() => setAdminMode(true)} style={{ background: "none", border: "none", color: C.muted, fontSize: 12, fontFamily: "Inter, sans-serif", cursor: "pointer", textDecoration: "underline" }}>
                   Commissioner Login
@@ -692,7 +801,7 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer }) {
 }
 
 // ── COMMISSIONER VIEW ──────────────────────────────────────────────────────
-function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLogout, activeTab, setActiveTab, addPlayer }) {
+function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLogout, activeTab, setActiveTab, addPlayer, pins, onResetPin }) {
 
   const tabs = [
     { id: "groups", label: "Group Results" },
@@ -745,7 +854,7 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
           <LeaderboardTab allPlayers={players} allPicks={picks} allMatches={allMatches} currentPlayer="" />
         )}
         {activeTab === "players" && (
-          <CommPlayers players={players} picks={picks} addPlayer={addPlayer} />
+          <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} onResetPin={onResetPin} />
         )}
       </div>
     </div>
@@ -883,7 +992,7 @@ function CommKnockout({ knockoutMatches, knockoutOpen, knockoutLocked, onSetTeam
   );
 }
 
-function CommPlayers({ players, picks, addPlayer }) {
+function CommPlayers({ players, picks, addPlayer, pins, onResetPin }) {
   const [newName, setNewName] = useState("");
 
   return (
@@ -901,9 +1010,18 @@ function CommPlayers({ players, picks, addPlayer }) {
       </div>
       {players.length === 0 && <div style={{ color: C.muted, fontSize: 14 }}>No players yet.</div>}
       {players.map(p => (
-        <div key={p} style={{ background: C.card, borderRadius: 8, padding: "10px 16px", marginBottom: 8, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div key={p} style={{ background: C.card, borderRadius: 8, padding: "10px 16px", marginBottom: 8, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>{p}</span>
-          <span style={{ fontSize: 12, color: C.muted }}>{Object.keys(picks[p] || {}).length} picks made</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 12, color: C.muted }}>{Object.keys(picks[p] || {}).length} picks</span>
+            {pins[p]
+              ? <span style={{ fontSize: 11, color: C.green, fontWeight: 600 }}>🔐 PIN set</span>
+              : <span style={{ fontSize: 11, color: C.muted }}>No PIN yet</span>
+            }
+            {pins[p] && (
+              <Btn small variant="danger" onClick={() => onResetPin(p)}>Reset PIN</Btn>
+            )}
+          </div>
         </div>
       ))}
     </div>
