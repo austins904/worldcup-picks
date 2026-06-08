@@ -157,16 +157,18 @@ async function saveState(key, value) {
 }
 
 // ── Scoring ────────────────────────────────────────────────────────────────
+const KNOCKOUT_PTS = { R32: 3, R16: 5, QF: 7, SF: 10, F: 15 };
+
 function scorePlayer(playerPicks, allMatches) {
   let pts = 0;
   allMatches.forEach((m) => {
     if (!m.result) return;
     const pick = playerPicks[m.id];
-    if (!pick) return;
+    if (!pick || pick !== m.result) return;
     if (m.stage === "group") {
-      if (pick === m.result) pts += 3;
+      pts += 2;
     } else {
-      if (pick === m.result) pts += 5;
+      pts += KNOCKOUT_PTS[m.round] || 0;
     }
   });
   return pts;
@@ -632,7 +634,7 @@ function GroupPicksTab({ groupMatches, picks, onPick }) {
     <div>
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 20, fontFamily: "'Bebas Neue', sans-serif", letterSpacing: 2, color: C.accent }}>GROUP STAGE PICKS</div>
-        <div style={{ fontSize: 13, color: C.textDim, marginTop: 4 }}>Pick the winner or draw for each match. <span style={{ color: C.green, fontWeight: 600 }}>+3 pts</span> for correct pick.</div>
+        <div style={{ fontSize: 13, color: C.textDim, marginTop: 4 }}>Pick the winner or draw for each match. <span style={{ color: C.green, fontWeight: 600 }}>+2 pts</span> for correct pick.</div>
       </div>
       {Object.entries(byDate).map(([date, matches]) => (
         <div key={date} style={{ marginBottom: 24 }}>
@@ -666,7 +668,10 @@ function KnockoutPicksTab({ knockoutMatches, picks, onPick, knockoutOpen, knocko
         const rMatches = knockoutMatches.filter(m => m.round === round);
         return (
           <div key={round} style={{ marginBottom: 24 }}>
-            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: C.gold, letterSpacing: 2, marginBottom: 10 }}>{label}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: C.gold, letterSpacing: 2 }}>{label}</div>
+              <Badge color={C.accentDim}>{KNOCKOUT_PTS[round]} pts</Badge>
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {rMatches.map(m => <MatchPickRow key={m.id} match={m} pick={picks[m.id]} onPick={null} locked />)}
             </div>
@@ -680,13 +685,16 @@ function KnockoutPicksTab({ knockoutMatches, picks, onPick, knockoutOpen, knocko
     <div>
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 20, fontFamily: "'Bebas Neue', sans-serif", letterSpacing: 2, color: C.accent }}>KNOCKOUT PICKS</div>
-        <div style={{ fontSize: 13, color: C.textDim, marginTop: 4 }}>Pick a winner for every match. <span style={{ color: C.green, fontWeight: 600 }}>+5 pts</span> per correct pick. Submit all picks before the commissioner locks them.</div>
+        <div style={{ fontSize: 13, color: C.textDim, marginTop: 4 }}>Pick a winner for every match. Points increase each round: <span style={{ color: C.green, fontWeight: 600 }}>R32=3 · R16=5 · QF=7 · SF=10 · Final=15</span>. Submit before the commissioner locks them.</div>
       </div>
       {KNOCKOUT_ROUNDS.map(({ round, label }) => {
         const rMatches = knockoutMatches.filter(m => m.round === round);
         return (
           <div key={round} style={{ marginBottom: 24 }}>
-            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: C.gold, letterSpacing: 2, marginBottom: 10 }}>{label}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: C.gold, letterSpacing: 2 }}>{label}</div>
+              <Badge color={C.accentDim}>{KNOCKOUT_PTS[round]} pts</Badge>
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {rMatches.map(m => <MatchPickRow key={m.id} match={m} pick={picks[m.id]} onPick={onPick} allowDraw={false} />)}
             </div>
