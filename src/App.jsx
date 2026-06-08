@@ -263,6 +263,7 @@ export default function App() {
   const [knockoutMatches, setKnockoutMatchesState] = useState(generateKnockoutMatches());
   const [picks, setPicksState] = useState({}); // { playerName: { matchId: result } }
   const [pins, setPinsState] = useState({}); // { playerName: "1234" }
+  const [paid, setPaidState] = useState({}); // { playerName: true }
   const [groupLocked, setGroupLockedState] = useState(false);
   const [knockoutOpen, setKnockoutOpenState] = useState(false);
   const [knockoutLocked, setKnockoutLockedState] = useState(false);
@@ -271,7 +272,7 @@ export default function App() {
   // Load from storage
   useEffect(() => {
     (async () => {
-      const [p, gm, km, pk, ko, kl, pn, gl] = await Promise.all([
+      const [p, gm, km, pk, ko, kl, pn, gl, pd] = await Promise.all([
         loadState("wc_players"),
         loadState("wc_group_matches"),
         loadState("wc_knockout_matches"),
@@ -280,6 +281,7 @@ export default function App() {
         loadState("wc_knockout_locked"),
         loadState("wc_pins"),
         loadState("wc_group_locked"),
+        loadState("wc_paid"),
       ]);
       if (p) setPlayersState(p);
       if (gm) setGroupMatchesState(gm);
@@ -289,6 +291,7 @@ export default function App() {
       if (kl !== null) setKnockoutLockedState(kl);
       if (pn) setPinsState(pn);
       if (gl !== null) setGroupLockedState(gl);
+      if (pd) setPaidState(pd);
       setLoading(false);
     })();
   }, []);
@@ -302,6 +305,7 @@ export default function App() {
   const setKnockoutOpen = (v) => { setKnockoutOpenState(v); saveState("wc_knockout_open", v); };
   const setKnockoutLocked = (v) => { setKnockoutLockedState(v); saveState("wc_knockout_locked", v); };
   const setPins = (v) => { setPinsState(v); saveState("wc_pins", v); };
+  const setPaid = (v) => { setPaidState(v); saveState("wc_paid", v); };
 
   const groupPicksLocked = groupLocked || isAutoLocked();
   const allMatches = [...groupMatches, ...knockoutMatches];
@@ -374,6 +378,8 @@ export default function App() {
       setActiveTab={setActiveTab}
       addPlayer={(name) => { if (!players.includes(name)) setPlayers([...players, name]); }}
       pins={pins}
+      paid={paid}
+      onTogglePaid={(name) => { const updated = { ...paid, [name]: !paid[name] }; setPaid(updated); }}
       onResetPin={(name) => { const updated = { ...pins }; delete updated[name]; setPins(updated); }}
     />
   );
@@ -621,6 +627,7 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
   const tabs = [
     { id: "groups", label: "Group Stage" },
     { id: "knockout", label: "Knockout" },
+    { id: "community", label: "Community Picks" },
     { id: "leaderboard", label: "Leaderboard" },
   ];
 
@@ -674,10 +681,13 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
 
       <div style={{ maxWidth: 800, margin: "0 auto", padding: "24px 16px" }}>
         {activeTab === "groups" && (
-          <GroupPicksTab groupMatches={groupMatches} picks={picks} onPick={groupPicksLocked ? null : onPick} groupPicksLocked={groupPicksLocked} />
+          <GroupPicksTab groupMatches={groupMatches} picks={picks} onPick={groupPicksLocked ? null : onPick} groupPicksLocked={groupPicksLocked} allPicks={allPicks} allPlayers={allPlayers} />
         )}
         {activeTab === "knockout" && (
-          <KnockoutPicksTab knockoutMatches={knockoutMatches} picks={picks} onPick={onPick} knockoutOpen={knockoutOpen} knockoutLocked={knockoutLocked} />
+          <KnockoutPicksTab knockoutMatches={knockoutMatches} picks={picks} onPick={onPick} knockoutOpen={knockoutOpen} knockoutLocked={knockoutLocked} allPicks={allPicks} allPlayers={allPlayers} knockoutLocked={knockoutLocked} />
+        )}
+        {activeTab === "community" && (
+          <CommunityPicksTab groupMatches={groupMatches} knockoutMatches={knockoutMatches} allPicks={allPicks} allPlayers={allPlayers} groupPicksLocked={groupPicksLocked} knockoutLocked={knockoutLocked} />
         )}
         {activeTab === "leaderboard" && (
           <LeaderboardTab allPlayers={allPlayers} allPicks={allPicks} allMatches={allMatches} currentPlayer={player} />
@@ -687,8 +697,50 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
   );
 }
 
+// ── Community picks helpers ────────────────────────────────────────────────
+function getPickBreakdown(matchId, allPicks, allPlayers) {
+  let home = 0, draw = 0, away = 0, total = 0;
+  allPlayers.forEach(p => {
+    const pick = allPicks[p]?.[matchId];
+    if (!pick) return;
+    total++;
+    if (pick === "home") home++;
+    else if (pick === "draw") draw++;
+    else if (pick === "away") away++;
+  });
+  return { home, draw, away, total };
+}
+
+function PickBreakdownBar({ matchId, allPicks, allPlayers, homeLabel, awayLabel, allowDraw }) {
+  const { home, draw, away, total } = getPickBreakdown(matchId, allPicks, allPlayers);
+  if (total === 0) return <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>No picks yet</div>;
+  const pct = v => Math.round((v / total) * 100);
+  const segments = [
+    { label: homeLabel, value: home, color: C.accent },
+    ...(allowDraw ? [{ label: "Draw", value: draw, color: C.muted }] : []),
+    { label: awayLabel, value: away, color: C.gold },
+  ];
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ display: "flex", borderRadius: 4, overflow: "hidden", height: 6, gap: 1 }}>
+        {segments.map(s => s.value > 0 && (
+          <div key={s.label} style={{ width: `${pct(s.value)}%`, background: s.color, transition: "width .3s" }} />
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
+        {segments.map(s => (
+          <span key={s.label} style={{ fontSize: 11, color: s.color, fontWeight: 600 }}>
+            {s.label} {pct(s.value)}% <span style={{ color: C.muted, fontWeight: 400 }}>({s.value})</span>
+          </span>
+        ))}
+        <span style={{ fontSize: 11, color: C.muted }}>{total} picks total</span>
+      </div>
+    </div>
+  );
+}
+
 // Group picks tab
-function GroupPicksTab({ groupMatches, picks, onPick, groupPicksLocked }) {
+function GroupPicksTab({ groupMatches, picks, onPick, groupPicksLocked, allPicks, allPlayers }) {
   const byDate = {};
   groupMatches.forEach(m => {
     if (!byDate[m.date]) byDate[m.date] = [];
@@ -712,7 +764,16 @@ function GroupPicksTab({ groupMatches, picks, onPick, groupPicksLocked }) {
         <div key={date} style={{ marginBottom: 24 }}>
           <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: C.gold, letterSpacing: 2, marginBottom: 10 }}>{date}</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {matches.map(m => <MatchPickRow key={m.id} match={m} pick={picks[m.id]} onPick={onPick} allowDraw />)}
+            {matches.map(m => (
+              <div key={m.id}>
+                <MatchPickRow match={m} pick={picks[m.id]} onPick={onPick} allowDraw />
+                {groupPicksLocked && (
+                  <div style={{ padding: "0 4px", marginTop: 2 }}>
+                    <PickBreakdownBar matchId={m.id} allPicks={allPicks} allPlayers={allPlayers} homeLabel={m.home.split(" ")[0]} awayLabel={m.away.split(" ")[0]} allowDraw />
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       ))}
@@ -721,7 +782,7 @@ function GroupPicksTab({ groupMatches, picks, onPick, groupPicksLocked }) {
 }
 
 // Knockout picks tab
-function KnockoutPicksTab({ knockoutMatches, picks, onPick, knockoutOpen, knockoutLocked }) {
+function KnockoutPicksTab({ knockoutMatches, picks, onPick, knockoutOpen, knockoutLocked, allPicks, allPlayers }) {
   if (!knockoutOpen) return (
     <div style={{ textAlign: "center", padding: 60 }}>
       <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
@@ -745,7 +806,16 @@ function KnockoutPicksTab({ knockoutMatches, picks, onPick, knockoutOpen, knocko
               <Badge color={C.accentDim}>{KNOCKOUT_PTS[round]} pts</Badge>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {rMatches.map(m => <MatchPickRow key={m.id} match={m} pick={picks[m.id]} onPick={null} locked />)}
+              {rMatches.map(m => (
+                <div key={m.id}>
+                  <MatchPickRow match={m} pick={picks[m.id]} onPick={null} locked />
+                  {knockoutLocked && m.home && m.away && (
+                    <div style={{ padding: "0 4px", marginTop: 2 }}>
+                      <PickBreakdownBar matchId={m.id} allPicks={allPicks} allPlayers={allPlayers} homeLabel={m.home.split(" ")[0]} awayLabel={m.away.split(" ")[0]} allowDraw={false} />
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         );
@@ -847,6 +917,140 @@ function MatchPickRow({ match, pick, onPick, allowDraw, locked }) {
   );
 }
 
+// ── COMMUNITY PICKS TAB ────────────────────────────────────────────────────
+function CommunityPicksTab({ groupMatches, knockoutMatches, allPicks, allPlayers, groupPicksLocked, knockoutLocked }) {
+  const [section, setSection] = useState("groups");
+
+  if (!groupPicksLocked) return (
+    <div style={{ textAlign: "center", padding: 60 }}>
+      <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
+      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 24, color: C.muted, letterSpacing: 3 }}>AVAILABLE AFTER LOCK</div>
+      <div style={{ color: C.textDim, marginTop: 8, fontSize: 14 }}>Community picks will be revealed once the group stage locks at 3:00 PM ET on June 11.</div>
+    </div>
+  );
+
+  const byDate = {};
+  groupMatches.forEach(m => {
+    if (!byDate[m.date]) byDate[m.date] = [];
+    byDate[m.date].push(m);
+  });
+
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 20, fontFamily: "'Bebas Neue', sans-serif", letterSpacing: 2, color: C.accent }}>COMMUNITY PICKS</div>
+        <div style={{ fontSize: 13, color: C.textDim, marginTop: 4 }}>See how everyone picked each match.</div>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        {["groups", "knockout"].map(s => (
+          <button key={s} onClick={() => setSection(s)} style={{ padding: "6px 18px", borderRadius: 20, fontSize: 13, fontWeight: 700, cursor: "pointer", background: section === s ? C.accent : "transparent", color: section === s ? "#000" : C.muted, border: `1px solid ${section === s ? C.accent : C.border}`, fontFamily: "Inter, sans-serif" }}>
+            {s === "groups" ? "Group Stage" : "Knockout"}
+          </button>
+        ))}
+      </div>
+
+      {section === "groups" && Object.entries(byDate).map(([date, matches]) => (
+        <div key={date} style={{ marginBottom: 24 }}>
+          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: C.gold, letterSpacing: 2, marginBottom: 10 }}>{date}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {matches.map(m => {
+              const { home, draw, away, total } = getPickBreakdown(m.id, allPicks, allPlayers);
+              const pct = v => total > 0 ? Math.round((v / total) * 100) : 0;
+              const segs = [
+                { label: m.home.split(" ")[0], count: home, color: C.accent },
+                { label: "Draw", count: draw, color: C.muted },
+                { label: m.away.split(" ")[0], count: away, color: C.gold },
+              ];
+              return (
+                <div key={m.id} style={{ background: C.card, borderRadius: 10, padding: "14px 16px", border: `1px solid ${m.result ? C.green + "44" : C.border}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 16 }}>{f(m.home)}</span>
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>{m.home}</span>
+                    <span style={{ color: C.muted, fontSize: 12 }}>vs</span>
+                    <span style={{ fontSize: 16 }}>{f(m.away)}</span>
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>{m.away}</span>
+                    {m.result && <Badge color={C.green}>✓ Result In</Badge>}
+                    <span style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>{m.time}</span>
+                  </div>
+                  <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", height: 24, gap: 1 }}>
+                    {segs.map(seg => pct(seg.count) > 0 && (
+                      <div key={seg.label} style={{ width: `${pct(seg.count)}%`, background: seg.color + "44", border: `1px solid ${seg.color}66`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: seg.color, overflow: "hidden", whiteSpace: "nowrap", padding: "0 4px", transition: "width .3s" }}>
+                        {pct(seg.count) > 10 ? `${pct(seg.count)}%` : ""}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 14, marginTop: 6, flexWrap: "wrap" }}>
+                    {segs.map(seg => (
+                      <span key={seg.label} style={{ fontSize: 12, color: seg.color, fontWeight: 600 }}>
+                        {seg.label} {pct(seg.count)}% <span style={{ color: C.muted, fontWeight: 400 }}>({seg.count})</span>
+                      </span>
+                    ))}
+                    <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{total} picks</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+
+      {section === "knockout" && !knockoutLocked && (
+        <div style={{ textAlign: "center", padding: 40, color: C.muted, fontSize: 14 }}>Knockout picks haven't been locked yet.</div>
+      )}
+
+      {section === "knockout" && knockoutLocked && KNOCKOUT_ROUNDS.map(({ round, label, pts }) => {
+        const rMatches = knockoutMatches.filter(m => m.round === round && m.home && m.away);
+        if (rMatches.length === 0) return null;
+        return (
+          <div key={round} style={{ marginBottom: 24 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: C.gold, letterSpacing: 2 }}>{label}</div>
+              <Badge color={C.accentDim}>{pts} pts</Badge>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {rMatches.map(m => {
+                const { home, away, total } = getPickBreakdown(m.id, allPicks, allPlayers);
+                const pct = v => total > 0 ? Math.round((v / total) * 100) : 0;
+                const segs = [
+                  { label: m.home.split(" ")[0], count: home, color: C.accent },
+                  { label: m.away.split(" ")[0], count: away, color: C.gold },
+                ];
+                return (
+                  <div key={m.id} style={{ background: C.card, borderRadius: 10, padding: "14px 16px", border: `1px solid ${m.result ? C.green + "44" : C.border}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 16 }}>{f(m.home)}</span>
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>{m.home}</span>
+                      <span style={{ color: C.muted, fontSize: 12 }}>vs</span>
+                      <span style={{ fontSize: 16 }}>{f(m.away)}</span>
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>{m.away}</span>
+                      {m.result && <Badge color={C.green}>✓ Result In</Badge>}
+                    </div>
+                    <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", height: 24, gap: 1 }}>
+                      {segs.map(seg => pct(seg.count) > 0 && (
+                        <div key={seg.label} style={{ width: `${pct(seg.count)}%`, background: seg.color + "44", border: `1px solid ${seg.color}66`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: seg.color, overflow: "hidden", whiteSpace: "nowrap", padding: "0 4px", transition: "width .3s" }}>
+                          {pct(seg.count) > 10 ? `${pct(seg.count)}%` : ""}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 14, marginTop: 6 }}>
+                      {segs.map(seg => (
+                        <span key={seg.label} style={{ fontSize: 12, color: seg.color, fontWeight: 600 }}>
+                          {seg.label} {pct(seg.count)}% <span style={{ color: C.muted, fontWeight: 400 }}>({seg.count})</span>
+                        </span>
+                      ))}
+                      <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{total} picks</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // Leaderboard
 function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer }) {
   const scored = allPlayers
@@ -881,7 +1085,7 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer }) {
 }
 
 // ── COMMISSIONER VIEW ──────────────────────────────────────────────────────
-function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, groupLocked, groupPicksLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLockGroupPicks, onRenamePlayer, onLogout, activeTab, setActiveTab, addPlayer, pins, onResetPin }) {
+function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, groupLocked, groupPicksLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLockGroupPicks, onRenamePlayer, onLogout, activeTab, setActiveTab, addPlayer, pins, paid, onTogglePaid, onResetPin }) {
 
   const tabs = [
     { id: "groups", label: "Group Results" },
@@ -934,7 +1138,7 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
           <LeaderboardTab allPlayers={players} allPicks={picks} allMatches={allMatches} currentPlayer="" />
         )}
         {activeTab === "players" && (
-          <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} onResetPin={onResetPin} onRenamePlayer={onRenamePlayer} />
+          <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} paid={paid} onTogglePaid={onTogglePaid} onResetPin={onResetPin} onRenamePlayer={onRenamePlayer} />
         )}
       </div>
     </div>
@@ -1084,9 +1288,9 @@ function CommKnockout({ knockoutMatches, knockoutOpen, knockoutLocked, onSetTeam
   );
 }
 
-function CommPlayers({ players, picks, addPlayer, pins, onResetPin, onRenamePlayer }) {
+function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onResetPin, onRenamePlayer }) {
   const [newName, setNewName] = useState("");
-  const [editingName, setEditingName] = useState(null); // player name being edited
+  const [editingName, setEditingName] = useState(null);
   const [editVal, setEditVal] = useState("");
   const [editErr, setEditErr] = useState("");
 
@@ -1100,10 +1304,66 @@ function CommPlayers({ players, picks, addPlayer, pins, onResetPin, onRenamePlay
     setEditErr("");
   };
 
+  const paidCount = players.filter(p => paid[p]).length;
+  const totalPot = paidCount * 20;
+  const payout1 = Math.floor(totalPot * 0.65);
+  const payout2 = Math.floor(totalPot * 0.25);
+  const payout3 = totalPot - payout1 - payout2;
+
   return (
     <div>
-      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, color: C.accent, letterSpacing: 2, marginBottom: 20 }}>MANAGE PLAYERS</div>
-      <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
+      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, color: C.accent, letterSpacing: 2, marginBottom: 8 }}>MANAGE PLAYERS</div>
+
+      {/* Dues + payout summary */}
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: paidCount > 0 ? 14 : 0, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: 1, fontFamily: "Inter, sans-serif" }}>DUES COLLECTED</div>
+            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 28, color: paidCount === players.length && players.length > 0 ? C.green : C.gold, lineHeight: 1.1 }}>
+              {paidCount} / {players.length}
+            </div>
+          </div>
+          <div style={{ width: 1, height: 36, background: C.border }} />
+          <div>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: 1, fontFamily: "Inter, sans-serif" }}>TOTAL POT</div>
+            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 28, color: C.accent, lineHeight: 1.1 }}>${totalPot}</div>
+          </div>
+          {paidCount < players.length && players.length > 0 && (
+            <>
+              <div style={{ width: 1, height: 36, background: C.border }} />
+              <div>
+                <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: 1, fontFamily: "Inter, sans-serif" }}>OUTSTANDING</div>
+                <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 28, color: C.red, lineHeight: 1.1 }}>${(players.length - paidCount) * 20}</div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Payout breakdown */}
+        {paidCount > 0 && (
+          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: 1, fontFamily: "Inter, sans-serif", marginBottom: 8 }}>PROJECTED PAYOUTS (65% / 25% / 10%)</div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {[
+                { place: "🥇 1st", pct: "65%", amount: payout1, color: C.gold },
+                { place: "🥈 2nd", pct: "25%", amount: payout2, color: "#94a3b8" },
+                { place: "🥉 3rd", pct: "10%", amount: payout3, color: "#cd7f32" },
+              ].map(row => (
+                <div key={row.place} style={{ background: C.surface, borderRadius: 8, padding: "8px 14px", border: `1px solid ${C.border}`, flex: 1, minWidth: 80, textAlign: "center" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: row.color, fontFamily: "Inter, sans-serif" }}>{row.place}</div>
+                  <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, color: row.color }}>${row.amount}</div>
+                  <div style={{ fontSize: 11, color: C.muted }}>{row.pct}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 8, fontFamily: "Inter, sans-serif" }}>
+              Based on {paidCount} paid × $20. {players.length - paidCount > 0 ? `${players.length - paidCount} still unpaid — payouts will increase.` : "All players paid!"}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
         <input
           placeholder="Add player name"
           value={newName}
@@ -1113,9 +1373,10 @@ function CommPlayers({ players, picks, addPlayer, pins, onResetPin, onRenamePlay
         />
         <Btn onClick={() => { if (newName.trim()) { addPlayer(newName.trim()); setNewName(""); } }}>Add Player</Btn>
       </div>
+
       {players.length === 0 && <div style={{ color: C.muted, fontSize: 14 }}>No players yet.</div>}
       {players.map(p => (
-        <div key={p} style={{ background: C.card, borderRadius: 8, padding: "10px 16px", marginBottom: 8, border: `1px solid ${C.border}` }}>
+        <div key={p} style={{ background: C.card, borderRadius: 8, padding: "10px 16px", marginBottom: 8, border: `1px solid ${paid[p] ? C.green + "55" : C.border}` }}>
           {editingName === p ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <input
@@ -1130,9 +1391,18 @@ function CommPlayers({ players, picks, addPlayer, pins, onResetPin, onRenamePlay
               <Btn small variant="ghost" onClick={() => { setEditingName(null); setEditErr(""); }}>Cancel</Btn>
             </div>
           ) : (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontWeight: 600, fontSize: 14 }}>{p}</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!paid[p]}
+                    onChange={() => onTogglePaid(p)}
+                    style={{ width: 16, height: 16, cursor: "pointer", accentColor: C.green }}
+                  />
+                  <span style={{ fontSize: 11, color: paid[p] ? C.green : C.muted, fontWeight: 600 }}>{paid[p] ? "PAID" : "UNPAID"}</span>
+                </label>
+                <span style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{p}</span>
                 <button onClick={() => { setEditingName(p); setEditVal(p); setEditErr(""); }} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 13, padding: 0 }} title="Rename">✏️</button>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
