@@ -253,12 +253,17 @@ export default function App() {
   const [view, setView] = useState("login"); // login | player | commissioner
   const [currentUser, setCurrentUser] = useState(null); // { name, isAdmin }
 
+  // Group stage lock deadline: June 11 2026 3:00 PM ET = 19:00 UTC
+  const GROUP_LOCK_TIME = new Date("2026-06-11T19:00:00Z");
+  const isAutoLocked = () => new Date() >= GROUP_LOCK_TIME;
+
   // Shared game state (stored)
   const [players, setPlayersState] = useState([]);
   const [groupMatches, setGroupMatchesState] = useState(generateGroupMatches());
   const [knockoutMatches, setKnockoutMatchesState] = useState(generateKnockoutMatches());
   const [picks, setPicksState] = useState({}); // { playerName: { matchId: result } }
   const [pins, setPinsState] = useState({}); // { playerName: "1234" }
+  const [groupLocked, setGroupLockedState] = useState(false);
   const [knockoutOpen, setKnockoutOpenState] = useState(false);
   const [knockoutLocked, setKnockoutLockedState] = useState(false);
   const [activeTab, setActiveTab] = useState("groups");
@@ -266,7 +271,7 @@ export default function App() {
   // Load from storage
   useEffect(() => {
     (async () => {
-      const [p, gm, km, pk, ko, kl, pn] = await Promise.all([
+      const [p, gm, km, pk, ko, kl, pn, gl] = await Promise.all([
         loadState("wc_players"),
         loadState("wc_group_matches"),
         loadState("wc_knockout_matches"),
@@ -274,6 +279,7 @@ export default function App() {
         loadState("wc_knockout_open"),
         loadState("wc_knockout_locked"),
         loadState("wc_pins"),
+        loadState("wc_group_locked"),
       ]);
       if (p) setPlayersState(p);
       if (gm) setGroupMatchesState(gm);
@@ -282,6 +288,7 @@ export default function App() {
       if (ko !== null) setKnockoutOpenState(ko);
       if (kl !== null) setKnockoutLockedState(kl);
       if (pn) setPinsState(pn);
+      if (gl !== null) setGroupLockedState(gl);
       setLoading(false);
     })();
   }, []);
@@ -291,10 +298,12 @@ export default function App() {
   const setGroupMatches = (v) => { setGroupMatchesState(v); saveState("wc_group_matches", v); };
   const setKnockoutMatches = (v) => { setKnockoutMatchesState(v); saveState("wc_knockout_matches", v); };
   const setPicks = (v) => { setPicksState(v); saveState("wc_picks", v); };
+  const setGroupLocked = (v) => { setGroupLockedState(v); saveState("wc_group_locked", v); };
   const setKnockoutOpen = (v) => { setKnockoutOpenState(v); saveState("wc_knockout_open", v); };
   const setKnockoutLocked = (v) => { setKnockoutLockedState(v); saveState("wc_knockout_locked", v); };
   const setPins = (v) => { setPinsState(v); saveState("wc_pins", v); };
 
+  const groupPicksLocked = groupLocked || isAutoLocked();
   const allMatches = [...groupMatches, ...knockoutMatches];
 
   if (loading) return (
@@ -330,6 +339,8 @@ export default function App() {
       picks={picks}
       knockoutOpen={knockoutOpen}
       knockoutLocked={knockoutLocked}
+      groupLocked={groupLocked}
+      groupPicksLocked={groupPicksLocked}
       allMatches={allMatches}
       onSetGroupResult={(id, result) => {
         const updated = groupMatches.map(m => m.id === id ? { ...m, result } : m);
@@ -345,6 +356,19 @@ export default function App() {
       }}
       onOpenKnockout={() => setKnockoutOpen(true)}
       onLockKnockout={() => setKnockoutLocked(true)}
+      onLockGroupPicks={() => setGroupLocked(true)}
+      onRenamePlayer={(oldName, newName) => {
+        // Update players list
+        setPlayers(players.map(p => p === oldName ? newName : p));
+        // Migrate picks
+        const newPicks = { ...picks };
+        if (newPicks[oldName]) { newPicks[newName] = newPicks[oldName]; delete newPicks[oldName]; }
+        setPicks(newPicks);
+        // Migrate pins
+        const newPins = { ...pins };
+        if (newPins[oldName]) { newPins[newName] = newPins[oldName]; delete newPins[oldName]; }
+        setPins(newPins);
+      }}
       onLogout={() => { setCurrentUser(null); setView("login"); }}
       activeTab={activeTab}
       setActiveTab={setActiveTab}
@@ -365,9 +389,20 @@ export default function App() {
       allMatches={allMatches}
       knockoutOpen={knockoutOpen}
       knockoutLocked={knockoutLocked}
+      groupPicksLocked={groupPicksLocked}
       onPick={(matchId, result) => {
         const updated = { ...picks, [currentUser.name]: { ...(picks[currentUser.name] || {}), [matchId]: result } };
         setPicks(updated);
+      }}
+      onRenamePlayer={(oldName, newName) => {
+        setPlayers(players.map(p => p === oldName ? newName : p));
+        const newPicks = { ...picks };
+        if (newPicks[oldName]) { newPicks[newName] = newPicks[oldName]; delete newPicks[oldName]; }
+        setPicks(newPicks);
+        const newPins = { ...pins };
+        if (newPins[oldName]) { newPins[newName] = newPins[oldName]; delete newPins[oldName]; }
+        setPins(newPins);
+        setCurrentUser({ ...currentUser, name: newName });
       }}
       onLogout={() => { setCurrentUser(null); setView("login"); }}
       activeTab={activeTab}
@@ -567,8 +602,21 @@ function LoginScreen({ players, pins, onLogin, onSetPin, onAddPlayer }) {
 }
 
 // ── PLAYER VIEW ────────────────────────────────────────────────────────────
-function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, allPicks, allMatches, knockoutOpen, knockoutLocked, onPick, onLogout, activeTab, setActiveTab }) {
+function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, allPicks, allMatches, knockoutOpen, knockoutLocked, groupPicksLocked, onPick, onRenamePlayer, onLogout, activeTab, setActiveTab }) {
   const myScore = scorePlayer(picks, allMatches);
+  const [editingName, setEditingName] = useState(false);
+  const [nameVal, setNameVal] = useState(player);
+  const [nameErr, setNameErr] = useState("");
+
+  const handleRename = () => {
+    const trimmed = nameVal.trim();
+    if (!trimmed) { setNameErr("Name can't be empty."); return; }
+    if (trimmed === player) { setEditingName(false); return; }
+    if (allPlayers.includes(trimmed)) { setNameErr("That name is already taken."); return; }
+    onRenamePlayer(player, trimmed);
+    setEditingName(false);
+    setNameErr("");
+  };
 
   const tabs = [
     { id: "groups", label: "Group Stage" },
@@ -587,10 +635,27 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
             <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, color: C.accent, letterSpacing: 3 }}>WC 2026 PICKS</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{player}</div>
-              <div style={{ fontSize: 12, color: C.gold, fontWeight: 700 }}>{myScore} pts</div>
-            </div>
+            {editingName ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  value={nameVal}
+                  onChange={e => { setNameVal(e.target.value); setNameErr(""); }}
+                  onKeyDown={e => { if (e.key === "Enter") handleRename(); if (e.key === "Escape") setEditingName(false); }}
+                  autoFocus
+                  style={{ padding: "4px 8px", background: C.surface, color: C.text, border: `1px solid ${nameErr ? C.red : C.accent}`, borderRadius: 6, fontSize: 13, fontFamily: "Inter, sans-serif", width: 120 }}
+                />
+                <Btn small onClick={handleRename}>Save</Btn>
+                <Btn small variant="ghost" onClick={() => { setEditingName(false); setNameVal(player); setNameErr(""); }}>✕</Btn>
+              </div>
+            ) : (
+              <div style={{ textAlign: "right" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{player}</div>
+                  <button onClick={() => { setEditingName(true); setNameVal(player); }} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 12, padding: 0 }} title="Edit name">✏️</button>
+                </div>
+                <div style={{ fontSize: 12, color: C.gold, fontWeight: 700 }}>{myScore} pts</div>
+              </div>
+            )}
             <Btn small variant="ghost" onClick={onLogout}>Logout</Btn>
           </div>
         </div>
@@ -609,7 +674,7 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
 
       <div style={{ maxWidth: 800, margin: "0 auto", padding: "24px 16px" }}>
         {activeTab === "groups" && (
-          <GroupPicksTab groupMatches={groupMatches} picks={picks} onPick={onPick} />
+          <GroupPicksTab groupMatches={groupMatches} picks={picks} onPick={groupPicksLocked ? null : onPick} groupPicksLocked={groupPicksLocked} />
         )}
         {activeTab === "knockout" && (
           <KnockoutPicksTab knockoutMatches={knockoutMatches} picks={picks} onPick={onPick} knockoutOpen={knockoutOpen} knockoutLocked={knockoutLocked} />
@@ -623,7 +688,7 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
 }
 
 // Group picks tab
-function GroupPicksTab({ groupMatches, picks, onPick }) {
+function GroupPicksTab({ groupMatches, picks, onPick, groupPicksLocked }) {
   const byDate = {};
   groupMatches.forEach(m => {
     if (!byDate[m.date]) byDate[m.date] = [];
@@ -634,7 +699,14 @@ function GroupPicksTab({ groupMatches, picks, onPick }) {
     <div>
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 20, fontFamily: "'Bebas Neue', sans-serif", letterSpacing: 2, color: C.accent }}>GROUP STAGE PICKS</div>
-        <div style={{ fontSize: 13, color: C.textDim, marginTop: 4 }}>Pick the winner or draw for each match. <span style={{ color: C.green, fontWeight: 600 }}>+2 pts</span> for correct pick.</div>
+        {groupPicksLocked ? (
+          <div style={{ marginTop: 8, background: `${C.red}22`, border: `1px solid ${C.red}55`, borderRadius: 8, padding: "8px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 16 }}>🔒</span>
+            <span style={{ fontSize: 13, color: C.red, fontWeight: 600 }}>Group stage picks are locked — tournament has started!</span>
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, color: C.textDim, marginTop: 4 }}>Pick the winner or draw for each match. <span style={{ color: C.green, fontWeight: 600 }}>+2 pts</span> for correct pick. Picks lock at <span style={{ color: C.gold, fontWeight: 600 }}>3:00 PM ET on June 11</span>.</div>
+        )}
       </div>
       {Object.entries(byDate).map(([date, matches]) => (
         <div key={date} style={{ marginBottom: 24 }}>
@@ -809,7 +881,7 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer }) {
 }
 
 // ── COMMISSIONER VIEW ──────────────────────────────────────────────────────
-function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLogout, activeTab, setActiveTab, addPlayer, pins, onResetPin }) {
+function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, groupLocked, groupPicksLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLockGroupPicks, onRenamePlayer, onLogout, activeTab, setActiveTab, addPlayer, pins, onResetPin }) {
 
   const tabs = [
     { id: "groups", label: "Group Results" },
@@ -845,7 +917,7 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
 
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
         {activeTab === "groups" && (
-          <CommGroupResults groupMatches={groupMatches} onSetResult={onSetGroupResult} />
+          <CommGroupResults groupMatches={groupMatches} onSetResult={onSetGroupResult} groupLocked={groupLocked} groupPicksLocked={groupPicksLocked} onLockGroupPicks={onLockGroupPicks} />
         )}
         {activeTab === "knockout" && (
           <CommKnockout
@@ -862,14 +934,14 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
           <LeaderboardTab allPlayers={players} allPicks={picks} allMatches={allMatches} currentPlayer="" />
         )}
         {activeTab === "players" && (
-          <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} onResetPin={onResetPin} />
+          <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} onResetPin={onResetPin} onRenamePlayer={onRenamePlayer} />
         )}
       </div>
     </div>
   );
 }
 
-function CommGroupResults({ groupMatches, onSetResult }) {
+function CommGroupResults({ groupMatches, onSetResult, groupLocked, groupPicksLocked, onLockGroupPicks }) {
   const byDate = {};
   groupMatches.forEach(m => {
     if (!byDate[m.date]) byDate[m.date] = [];
@@ -878,7 +950,19 @@ function CommGroupResults({ groupMatches, onSetResult }) {
 
   return (
     <div>
-      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, color: C.accent, letterSpacing: 2, marginBottom: 20 }}>ENTER GROUP STAGE RESULTS</div>
+      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, color: C.accent, letterSpacing: 2, marginBottom: 12 }}>ENTER GROUP STAGE RESULTS</div>
+
+      {/* Lock controls */}
+      <div style={{ marginBottom: 24, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        {groupPicksLocked ? (
+          <Badge color={C.red}>🔒 GROUP PICKS LOCKED</Badge>
+        ) : (
+          <>
+            <Btn variant="danger" onClick={onLockGroupPicks}>Lock Group Picks Now</Btn>
+            <span style={{ fontSize: 12, color: C.muted, fontFamily: "Inter, sans-serif" }}>Auto-locks at 3:00 PM ET on June 11 regardless.</span>
+          </>
+        )}
+      </div>
       {Object.entries(byDate).map(([date, matches]) => (
         <div key={date} style={{ marginBottom: 28 }}>
           <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: C.gold, letterSpacing: 2, marginBottom: 10 }}>{date}</div>
@@ -1000,8 +1084,21 @@ function CommKnockout({ knockoutMatches, knockoutOpen, knockoutLocked, onSetTeam
   );
 }
 
-function CommPlayers({ players, picks, addPlayer, pins, onResetPin }) {
+function CommPlayers({ players, picks, addPlayer, pins, onResetPin, onRenamePlayer }) {
   const [newName, setNewName] = useState("");
+  const [editingName, setEditingName] = useState(null); // player name being edited
+  const [editVal, setEditVal] = useState("");
+  const [editErr, setEditErr] = useState("");
+
+  const handleRename = (oldName) => {
+    const trimmed = editVal.trim();
+    if (!trimmed) { setEditErr("Name can't be empty."); return; }
+    if (trimmed === oldName) { setEditingName(null); return; }
+    if (players.includes(trimmed)) { setEditErr("Name already taken."); return; }
+    onRenamePlayer(oldName, trimmed);
+    setEditingName(null);
+    setEditErr("");
+  };
 
   return (
     <div>
@@ -1018,18 +1115,33 @@ function CommPlayers({ players, picks, addPlayer, pins, onResetPin }) {
       </div>
       {players.length === 0 && <div style={{ color: C.muted, fontSize: 14 }}>No players yet.</div>}
       {players.map(p => (
-        <div key={p} style={{ background: C.card, borderRadius: 8, padding: "10px 16px", marginBottom: 8, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>{p}</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 12, color: C.muted }}>{Object.keys(picks[p] || {}).length} picks</span>
-            {pins[p]
-              ? <span style={{ fontSize: 11, color: C.green, fontWeight: 600 }}>🔐 PIN set</span>
-              : <span style={{ fontSize: 11, color: C.muted }}>No PIN yet</span>
-            }
-            {pins[p] && (
-              <Btn small variant="danger" onClick={() => onResetPin(p)}>Reset PIN</Btn>
-            )}
-          </div>
+        <div key={p} style={{ background: C.card, borderRadius: 8, padding: "10px 16px", marginBottom: 8, border: `1px solid ${C.border}` }}>
+          {editingName === p ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <input
+                value={editVal}
+                onChange={e => { setEditVal(e.target.value); setEditErr(""); }}
+                onKeyDown={e => { if (e.key === "Enter") handleRename(p); if (e.key === "Escape") setEditingName(null); }}
+                autoFocus
+                style={{ padding: "6px 10px", background: C.surface, color: C.text, border: `1px solid ${editErr ? C.red : C.accent}`, borderRadius: 6, fontSize: 14, fontFamily: "Inter, sans-serif", width: 160 }}
+              />
+              {editErr && <span style={{ fontSize: 11, color: C.red }}>{editErr}</span>}
+              <Btn small onClick={() => handleRename(p)}>Save</Btn>
+              <Btn small variant="ghost" onClick={() => { setEditingName(null); setEditErr(""); }}>Cancel</Btn>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontWeight: 600, fontSize: 14 }}>{p}</span>
+                <button onClick={() => { setEditingName(p); setEditVal(p); setEditErr(""); }} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 13, padding: 0 }} title="Rename">✏️</button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 12, color: C.muted }}>{Object.keys(picks[p] || {}).length} picks</span>
+                {pins[p] ? <span style={{ fontSize: 11, color: C.green, fontWeight: 600 }}>🔐 PIN set</span> : <span style={{ fontSize: 11, color: C.muted }}>No PIN</span>}
+                {pins[p] && <Btn small variant="danger" onClick={() => onResetPin(p)}>Reset PIN</Btn>}
+              </div>
+            </div>
+          )}
         </div>
       ))}
     </div>
