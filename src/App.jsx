@@ -111,10 +111,54 @@ function generateGroupMatches() {
 const KNOCKOUT_ROUNDS = [
   { round: "R32", label: "Round of 32", matchCount: 16 },
   { round: "R16", label: "Round of 16", matchCount: 8 },
-  { round: "QF", label: "Quarterfinals", matchCount: 4 },
-  { round: "SF", label: "Semifinals", matchCount: 2 },
-  { round: "F", label: "Final", matchCount: 1 },
+  { round: "QF",  label: "Quarterfinals", matchCount: 4 },
+  { round: "SF",  label: "Semifinals", matchCount: 2 },
+  { round: "F",   label: "Final", matchCount: 1 },
 ];
+
+// Bracket pairing: which two matches feed into each subsequent match
+// R32-1 + R32-2 → R16-1, R32-3 + R32-4 → R16-2, etc.
+const BRACKET_FEEDS = {
+  "R16-1": ["R32-1",  "R32-2"],
+  "R16-2": ["R32-3",  "R32-4"],
+  "R16-3": ["R32-5",  "R32-6"],
+  "R16-4": ["R32-7",  "R32-8"],
+  "R16-5": ["R32-9",  "R32-10"],
+  "R16-6": ["R32-11", "R32-12"],
+  "R16-7": ["R32-13", "R32-14"],
+  "R16-8": ["R32-15", "R32-16"],
+  "QF-1":  ["R16-1",  "R16-2"],
+  "QF-2":  ["R16-3",  "R16-4"],
+  "QF-3":  ["R16-5",  "R16-6"],
+  "QF-4":  ["R16-7",  "R16-8"],
+  "SF-1":  ["QF-1",   "QF-2"],
+  "SF-2":  ["QF-3",   "QF-4"],
+  "F-1":   ["SF-1",   "SF-2"],
+};
+
+// Get the team a player picked to win a given match (cascading through their picks)
+function getPickedWinner(matchId, picks, knockoutMatches) {
+  const match = knockoutMatches.find(m => m.id === matchId);
+  if (!match) return null;
+  const pick = picks[matchId];
+  if (!pick) return null;
+  // For R32, teams come from commissioner-set match data
+  if (match.round === "R32") {
+    return pick === "home" ? match.home : match.away;
+  }
+  // For later rounds, teams come from picked winners of feeder matches
+  const [feedA, feedB] = BRACKET_FEEDS[matchId] || [];
+  const teamA = getPickedWinner(feedA, picks, knockoutMatches);
+  const teamB = getPickedWinner(feedB, picks, knockoutMatches);
+  return pick === "home" ? teamA : teamB;
+}
+
+// Get the actual winner of a match
+function getActualWinner(matchId, knockoutMatches) {
+  const match = knockoutMatches.find(m => m.id === matchId);
+  if (!match || !match.result) return null;
+  return match.result === "home" ? match.home : match.away;
+}
 
 function generateKnockoutMatches() {
   const matches = [];
@@ -161,6 +205,8 @@ const KNOCKOUT_PTS = { R32: 3, R16: 5, QF: 7, SF: 10, F: 15 };
 
 function scorePlayer(playerPicks, allMatches) {
   let pts = 0;
+  const knockoutMatches = allMatches.filter(m => m.stage === "knockout");
+
   allMatches.forEach((m) => {
     if (!m.result) return;
     const pick = playerPicks[m.id];
@@ -168,7 +214,12 @@ function scorePlayer(playerPicks, allMatches) {
     if (m.stage === "group") {
       pts += 2;
     } else {
-      pts += KNOCKOUT_PTS[m.round] || 0;
+      // For knockout, verify the picked team actually got there via correct prior picks
+      const actualWinner = getActualWinner(m.id, knockoutMatches);
+      const pickedWinner = getPickedWinner(m.id, playerPicks, knockoutMatches);
+      if (actualWinner && pickedWinner === actualWinner) {
+        pts += KNOCKOUT_PTS[m.round] || 0;
+      }
     }
   });
   return pts;
@@ -782,6 +833,7 @@ function GroupPicksTab({ groupMatches, picks, onPick, groupPicksLocked, allPicks
 }
 
 // Knockout picks tab
+// ── KNOCKOUT BRACKET ───────────────────────────────────────────────────────
 function KnockoutPicksTab({ knockoutMatches, picks, onPick, knockoutOpen, knockoutLocked, allPicks, allPlayers }) {
   if (!knockoutOpen) return (
     <div style={{ textAlign: "center", padding: 60 }}>
@@ -791,58 +843,170 @@ function KnockoutPicksTab({ knockoutMatches, picks, onPick, knockoutOpen, knocko
     </div>
   );
 
-  if (knockoutLocked) return (
-    <div>
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 20, fontFamily: "'Bebas Neue', sans-serif", letterSpacing: 2, color: C.accent }}>KNOCKOUT PICKS</div>
-        <div style={{ fontSize: 13, color: C.gold, marginTop: 4, fontWeight: 600 }}>Picks are locked — results incoming!</div>
-      </div>
-      {KNOCKOUT_ROUNDS.map(({ round, label }) => {
-        const rMatches = knockoutMatches.filter(m => m.round === round);
-        return (
-          <div key={round} style={{ marginBottom: 24 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: C.gold, letterSpacing: 2 }}>{label}</div>
-              <Badge color={C.accentDim}>{KNOCKOUT_PTS[round]} pts</Badge>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {rMatches.map(m => (
-                <div key={m.id}>
-                  <MatchPickRow match={m} pick={picks[m.id]} onPick={null} locked />
-                  {knockoutLocked && m.home && m.away && (
-                    <div style={{ padding: "0 4px", marginTop: 2 }}>
-                      <PickBreakdownBar matchId={m.id} allPicks={allPicks} allPlayers={allPlayers} homeLabel={m.home.split(" ")[0]} awayLabel={m.away.split(" ")[0]} allowDraw={false} />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
+  const totalPicks = ["R32","R16","QF","SF","F"].reduce((acc, r) => {
+    const matches = knockoutMatches.filter(m => m.round === r);
+    return acc + matches.filter(m => picks[m.id]).length;
+  }, 0);
+  const totalMatches = 31;
 
   return (
     <div>
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 20, fontFamily: "'Bebas Neue', sans-serif", letterSpacing: 2, color: C.accent }}>KNOCKOUT PICKS</div>
-        <div style={{ fontSize: 13, color: C.textDim, marginTop: 4 }}>Pick a winner for every match. Points increase each round: <span style={{ color: C.green, fontWeight: 600 }}>R32=3 · R16=5 · QF=7 · SF=10 · Final=15</span>. Submit before the commissioner locks them.</div>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 20, fontFamily: "'Bebas Neue', sans-serif", letterSpacing: 2, color: C.accent }}>KNOCKOUT BRACKET</div>
+        {knockoutLocked
+          ? <div style={{ fontSize: 13, color: C.gold, marginTop: 4, fontWeight: 600 }}>🔒 Picks locked — bracket updating as results come in!</div>
+          : <div style={{ fontSize: 13, color: C.textDim, marginTop: 4 }}>Pick winners round by round — your picks cascade through the bracket automatically. <span style={{ color: C.gold, fontWeight: 600 }}>{totalPicks}/{totalMatches} picks made.</span></div>
+        }
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>R32=3pts · R16=5pts · QF=7pts · SF=10pts · Final=15pts</div>
       </div>
-      {KNOCKOUT_ROUNDS.map(({ round, label }) => {
-        const rMatches = knockoutMatches.filter(m => m.round === round);
-        return (
-          <div key={round} style={{ marginBottom: 24 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: C.gold, letterSpacing: 2 }}>{label}</div>
-              <Badge color={C.accentDim}>{KNOCKOUT_PTS[round]} pts</Badge>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {rMatches.map(m => <MatchPickRow key={m.id} match={m} pick={picks[m.id]} onPick={onPick} allowDraw={false} />)}
-            </div>
-          </div>
-        );
-      })}
+      <BracketView knockoutMatches={knockoutMatches} picks={picks} onPick={knockoutLocked ? null : onPick} />
+    </div>
+  );
+}
+
+function BracketView({ knockoutMatches, picks, onPick }) {
+  // Split into left half (matches 1-8) and right half (matches 9-16)
+  const r32 = knockoutMatches.filter(m => m.round === "R32");
+  const leftR32  = r32.slice(0, 8);   // R32-1 to R32-8
+  const rightR32 = r32.slice(8, 16);  // R32-9 to R32-16
+
+  const leftR16  = knockoutMatches.filter(m => m.round === "R16").slice(0, 4);
+  const rightR16 = knockoutMatches.filter(m => m.round === "R16").slice(4, 8);
+  const leftQF   = knockoutMatches.filter(m => m.round === "QF").slice(0, 2);
+  const rightQF  = knockoutMatches.filter(m => m.round === "QF").slice(2, 4);
+  const leftSF   = knockoutMatches.filter(m => m.round === "SF").slice(0, 1);
+  const rightSF  = knockoutMatches.filter(m => m.round === "SF").slice(1, 2);
+  const final    = knockoutMatches.filter(m => m.round === "F");
+
+  return (
+    <div style={{ overflowX: "auto", paddingBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 0, minWidth: 900 }}>
+        {/* Left side — rounds flow left to right toward center */}
+        <BracketColumn matches={leftR32}  round="R32" side="left"  picks={picks} onPick={onPick} knockoutMatches={knockoutMatches} label="Round of 32" />
+        <BracketConnectors count={4} />
+        <BracketColumn matches={leftR16}  round="R16" side="left"  picks={picks} onPick={onPick} knockoutMatches={knockoutMatches} label="Round of 16" />
+        <BracketConnectors count={2} />
+        <BracketColumn matches={leftQF}   round="QF"  side="left"  picks={picks} onPick={onPick} knockoutMatches={knockoutMatches} label="Quarterfinals" />
+        <BracketConnectors count={1} />
+        <BracketColumn matches={leftSF}   round="SF"  side="left"  picks={picks} onPick={onPick} knockoutMatches={knockoutMatches} label="Semifinals" />
+        <BracketConnectors count={0} half />
+
+        {/* Final in center */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flexShrink: 0, width: 120 }}>
+          <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 13, color: C.gold, letterSpacing: 2, marginBottom: 4 }}>FINAL</div>
+          {final.map(m => <BracketMatch key={m.id} match={m} picks={picks} onPick={onPick} knockoutMatches={knockoutMatches} isFinal />)}
+        </div>
+
+        {/* Right side — rounds flow right to left toward center */}
+        <BracketConnectors count={0} half right />
+        <BracketColumn matches={rightSF}  round="SF"  side="right" picks={picks} onPick={onPick} knockoutMatches={knockoutMatches} label="Semifinals" />
+        <BracketConnectors count={1} right />
+        <BracketColumn matches={rightQF}  round="QF"  side="right" picks={picks} onPick={onPick} knockoutMatches={knockoutMatches} label="Quarterfinals" />
+        <BracketConnectors count={2} right />
+        <BracketColumn matches={rightR16} round="R16" side="right" picks={picks} onPick={onPick} knockoutMatches={knockoutMatches} label="Round of 16" />
+        <BracketConnectors count={4} right />
+        <BracketColumn matches={rightR32} round="R32" side="right" picks={picks} onPick={onPick} knockoutMatches={knockoutMatches} label="Round of 32" />
+      </div>
+    </div>
+  );
+}
+
+function BracketColumn({ matches, round, side, picks, onPick, knockoutMatches, label }) {
+  const pts = KNOCKOUT_PTS[round];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+      <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: 1, marginBottom: 6, whiteSpace: "nowrap", fontFamily: "Inter, sans-serif" }}>
+        {label} <span style={{ color: C.accentDim }}>+{pts}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-around", height: matchColumnHeight(round) }}>
+        {matches.map(m => (
+          <BracketMatch key={m.id} match={m} picks={picks} onPick={onPick} knockoutMatches={knockoutMatches} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function matchColumnHeight(round) {
+  const heights = { R32: 720, R16: 720, QF: 720, SF: 720, F: 720 };
+  return heights[round] || 720;
+}
+
+function BracketConnectors({ count, half, right }) {
+  // Simple spacer — visual connectors via CSS borders
+  return <div style={{ width: 16, flexShrink: 0 }} />;
+}
+
+function BracketMatch({ match, picks, onPick, knockoutMatches, isFinal }) {
+  const feeds = BRACKET_FEEDS[match.id];
+
+  // Derive the two teams from picks cascade or commissioner data
+  let teamA, teamB;
+  if (match.round === "R32") {
+    teamA = match.home || null;
+    teamB = match.away || null;
+  } else if (feeds) {
+    teamA = getPickedWinner(feeds[0], picks, knockoutMatches) || null;
+    teamB = getPickedWinner(feeds[1], picks, knockoutMatches) || null;
+  }
+
+  const myPick = picks[match.id];
+  const pickedTeam = myPick === "home" ? teamA : myPick === "away" ? teamB : null;
+  const actualWinner = getActualWinner(match.id, knockoutMatches);
+  const isCorrect = actualWinner && pickedTeam === actualWinner;
+  const isWrong = actualWinner && pickedTeam && pickedTeam !== actualWinner;
+
+  const handlePick = (team) => {
+    if (!onPick || !team) return;
+    const val = team === teamA ? "home" : "away";
+    onPick(match.id, picks[match.id] === val ? null : val);
+  };
+
+  const TeamRow = ({ team, isHome }) => {
+    if (!team) return (
+      <div style={{ padding: "5px 8px", fontSize: 11, color: C.muted, fontStyle: "italic", borderRadius: 4 }}>TBD</div>
+    );
+    const isPicked = pickedTeam === team;
+    const isActualWinner = actualWinner === team;
+    const isActualLoser = actualWinner && actualWinner !== team;
+    return (
+      <button
+        onClick={() => handlePick(team)}
+        disabled={!onPick || !!actualWinner}
+        style={{
+          display: "flex", alignItems: "center", gap: 4,
+          padding: "5px 7px", width: "100%", textAlign: "left",
+          background: isActualWinner ? `${C.green}25` : isPicked && !actualWinner ? `${C.accent}20` : "transparent",
+          border: "none",
+          borderRadius: 4,
+          cursor: onPick && !actualWinner && team ? "pointer" : "default",
+          opacity: isActualLoser ? 0.4 : 1,
+          transition: "all .12s",
+        }}
+      >
+        <span style={{ fontSize: 13 }}>{f(team)}</span>
+        <span style={{ fontSize: 11, fontWeight: isPicked || isActualWinner ? 700 : 400, color: isActualWinner ? C.green : isPicked ? C.accent : C.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {team.length > 10 ? team.split(" ").map(w => w[0]).join("") : team}
+        </span>
+        {isPicked && !actualWinner && <span style={{ fontSize: 9, color: C.accent }}>✓</span>}
+        {isActualWinner && <span style={{ fontSize: 10 }}>{isCorrect ? "✅" : "❌"}</span>}
+      </button>
+    );
+  };
+
+  return (
+    <div style={{
+      width: isFinal ? 110 : 105,
+      background: C.card,
+      border: `1px solid ${isCorrect ? C.green : isWrong ? C.red + "88" : C.border}`,
+      borderRadius: 6,
+      overflow: "hidden",
+      margin: "3px 0",
+      flexShrink: 0,
+    }}>
+      <TeamRow team={teamA} isHome={true} />
+      <div style={{ height: 1, background: C.border }} />
+      <TeamRow team={teamB} isHome={false} />
     </div>
   );
 }
