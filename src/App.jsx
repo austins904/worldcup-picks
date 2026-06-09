@@ -318,12 +318,13 @@ export default function App() {
   const [groupLocked, setGroupLockedState] = useState(false);
   const [knockoutOpen, setKnockoutOpenState] = useState(false);
   const [knockoutLocked, setKnockoutLockedState] = useState(false);
+  const [lastUpdated, setLastUpdatedState] = useState(null);
   const [activeTab, setActiveTab] = useState("groups");
 
   // Load from storage
   useEffect(() => {
     (async () => {
-      const [p, gm, km, pk, ko, kl, pn, gl, pd] = await Promise.all([
+      const [p, gm, km, pk, ko, kl, pn, gl, pd, lu] = await Promise.all([
         loadState("wc_players"),
         loadState("wc_group_matches"),
         loadState("wc_knockout_matches"),
@@ -333,6 +334,7 @@ export default function App() {
         loadState("wc_pins"),
         loadState("wc_group_locked"),
         loadState("wc_paid"),
+        loadState("wc_last_updated"),
       ]);
       if (p) setPlayersState(p);
       if (gm) setGroupMatchesState(gm);
@@ -343,14 +345,15 @@ export default function App() {
       if (pn) setPinsState(pn);
       if (gl !== null) setGroupLockedState(gl);
       if (pd) setPaidState(pd);
+      if (lu) setLastUpdatedState(lu);
       setLoading(false);
     })();
   }, []);
 
   // Persist helpers — Supabase stores jsonb so no JSON.stringify needed
   const setPlayers = (v) => { setPlayersState(v); saveState("wc_players", v); };
-  const setGroupMatches = (v) => { setGroupMatchesState(v); saveState("wc_group_matches", v); };
-  const setKnockoutMatches = (v) => { setKnockoutMatchesState(v); saveState("wc_knockout_matches", v); };
+  const setGroupMatches = (v) => { setGroupMatchesState(v); saveState("wc_group_matches", v); const ts = new Date().toISOString(); setLastUpdatedState(ts); saveState("wc_last_updated", ts); };
+  const setKnockoutMatches = (v) => { setKnockoutMatchesState(v); saveState("wc_knockout_matches", v); const ts = new Date().toISOString(); setLastUpdatedState(ts); saveState("wc_last_updated", ts); };
   const setPicks = (v) => { setPicksState(v); saveState("wc_picks", v); };
   const setGroupLocked = (v) => { setGroupLockedState(v); saveState("wc_group_locked", v); };
   const setKnockoutOpen = (v) => { setKnockoutOpenState(v); saveState("wc_knockout_open", v); };
@@ -432,6 +435,7 @@ export default function App() {
       paid={paid}
       onTogglePaid={(name) => { const updated = { ...paid, [name]: !paid[name] }; setPaid(updated); }}
       onResetPin={(name) => { const updated = { ...pins }; delete updated[name]; setPins(updated); }}
+      lastUpdated={lastUpdated}
     />
   );
 
@@ -447,6 +451,7 @@ export default function App() {
       knockoutOpen={knockoutOpen}
       knockoutLocked={knockoutLocked}
       groupPicksLocked={groupPicksLocked}
+      lastUpdated={lastUpdated}
       onPick={(matchId, result) => {
         const updated = { ...picks, [currentUser.name]: { ...(picks[currentUser.name] || {}), [matchId]: result } };
         setPicks(updated);
@@ -659,11 +664,29 @@ function LoginScreen({ players, pins, onLogin, onSetPin, onAddPlayer }) {
 }
 
 // ── PLAYER VIEW ────────────────────────────────────────────────────────────
-function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, allPicks, allMatches, knockoutOpen, knockoutLocked, groupPicksLocked, onPick, onRenamePlayer, onLogout, activeTab, setActiveTab }) {
+function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, allPicks, allMatches, knockoutOpen, knockoutLocked, groupPicksLocked, lastUpdated, onPick, onRenamePlayer, onLogout, activeTab, setActiveTab }) {
   const myScore = scorePlayer(picks, allMatches);
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(player);
   const [nameErr, setNameErr] = useState("");
+
+  // Pick completion stats
+  const totalGroupMatches = groupMatches.length;
+  const myGroupPicks = groupMatches.filter(m => picks[m.id]).length;
+  const unpickedGroup = totalGroupMatches - myGroupPicks;
+  const showPickWarning = !groupPicksLocked && unpickedGroup > 0;
+
+  // Last updated display
+  const lastUpdatedStr = lastUpdated ? (() => {
+    const d = new Date(lastUpdated);
+    const now = new Date();
+    const diffMins = Math.floor((now - d) / 60000);
+    if (diffMins < 1) return "just now";
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const diffHrs = Math.floor(diffMins / 60);
+    if (diffHrs < 24) return `${diffHrs}h ago`;
+    return d.toLocaleDateString();
+  })() : null;
 
   const handleRename = () => {
     const trimmed = nameVal.trim();
@@ -731,17 +754,27 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
       </div>
 
       <div style={{ maxWidth: 800, margin: "0 auto", padding: "24px 16px" }}>
+        {/* Pick completion warning */}
+        {showPickWarning && activeTab === "groups" && (
+          <div style={{ background: `${C.gold}20`, border: `1px solid ${C.gold}55`, borderRadius: 10, padding: "10px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <div>
+              <span style={{ fontSize: 13, color: C.gold, fontWeight: 700 }}>You have {unpickedGroup} unpicked match{unpickedGroup !== 1 ? "es" : ""}!</span>
+              <span style={{ fontSize: 12, color: C.textDim, marginLeft: 8 }}>Picks lock at 3:00 PM ET on June 11.</span>
+            </div>
+          </div>
+        )}
         {activeTab === "groups" && (
           <GroupPicksTab groupMatches={groupMatches} picks={picks} onPick={groupPicksLocked ? null : onPick} groupPicksLocked={groupPicksLocked} allPicks={allPicks} allPlayers={allPlayers} />
         )}
         {activeTab === "knockout" && (
-          <KnockoutPicksTab knockoutMatches={knockoutMatches} picks={picks} onPick={onPick} knockoutOpen={knockoutOpen} knockoutLocked={knockoutLocked} allPicks={allPicks} allPlayers={allPlayers} knockoutLocked={knockoutLocked} />
+          <KnockoutPicksTab knockoutMatches={knockoutMatches} picks={picks} onPick={onPick} knockoutOpen={knockoutOpen} knockoutLocked={knockoutLocked} allPicks={allPicks} allPlayers={allPlayers} />
         )}
         {activeTab === "community" && (
           <CommunityPicksTab groupMatches={groupMatches} knockoutMatches={knockoutMatches} allPicks={allPicks} allPlayers={allPlayers} groupPicksLocked={groupPicksLocked} knockoutLocked={knockoutLocked} />
         )}
         {activeTab === "leaderboard" && (
-          <LeaderboardTab allPlayers={allPlayers} allPicks={allPicks} allMatches={allMatches} currentPlayer={player} />
+          <LeaderboardTab allPlayers={allPlayers} allPicks={allPicks} allMatches={allMatches} currentPlayer={player} lastUpdated={lastUpdatedStr} isCommissioner={false} />
         )}
       </div>
     </div>
@@ -1215,33 +1248,182 @@ function CommunityPicksTab({ groupMatches, knockoutMatches, allPicks, allPlayers
   );
 }
 
+// Max points still available to a player
+function maxPossibleScore(playerPicks, allMatches) {
+  const knockoutMatches = allMatches.filter(m => m.stage === "knockout");
+  let pts = 0;
+  allMatches.forEach(m => {
+    if (m.stage === "group") {
+      if (!m.result) pts += 2; // unpicked or unresolved
+      else if (playerPicks[m.id] === m.result) pts += 2; // already correct
+    } else {
+      if (!m.result) pts += KNOCKOUT_PTS[m.round] || 0; // not resolved yet
+      else {
+        const actualWinner = getActualWinner(m.id, knockoutMatches);
+        const pickedWinner = getPickedWinner(m.id, playerPicks, knockoutMatches);
+        if (actualWinner && pickedWinner === actualWinner) pts += KNOCKOUT_PTS[m.round] || 0;
+      }
+    }
+  });
+  return pts;
+}
+
+// Score breakdown per player
+function scoreBreakdown(playerPicks, allMatches) {
+  const knockoutMatches = allMatches.filter(m => m.stage === "knockout");
+  let groupPts = 0, groupCorrect = 0, groupTotal = 0;
+  const koBreakdown = { R32: 0, R16: 0, QF: 0, SF: 0, F: 0 };
+
+  allMatches.forEach(m => {
+    if (!m.result) return;
+    if (m.stage === "group") {
+      groupTotal++;
+      if (playerPicks[m.id] === m.result) { groupPts += 2; groupCorrect++; }
+    } else {
+      const actualWinner = getActualWinner(m.id, knockoutMatches);
+      const pickedWinner = getPickedWinner(m.id, playerPicks, knockoutMatches);
+      if (actualWinner && pickedWinner === actualWinner) koBreakdown[m.round] = (koBreakdown[m.round] || 0) + (KNOCKOUT_PTS[m.round] || 0);
+    }
+  });
+  return { groupPts, groupCorrect, groupTotal, koBreakdown };
+}
+
+// Most popular wrong pick
+function getMostPopularWrongPick(allMatches, allPicks, allPlayers) {
+  const groupMatches = allMatches.filter(m => m.stage === "group" && m.result);
+  let worst = null;
+  let worstCount = 0;
+  groupMatches.forEach(m => {
+    let wrongCount = 0;
+    allPlayers.forEach(p => {
+      const pick = allPicks[p]?.[m.id];
+      if (pick && pick !== m.result) wrongCount++;
+    });
+    if (wrongCount > worstCount) {
+      worstCount = wrongCount;
+      const wrongPick = allPlayers.map(p => allPicks[p]?.[m.id]).find(pk => pk && pk !== m.result);
+      const wrongTeam = wrongPick === "home" ? m.home : wrongPick === "away" ? m.away : "Draw";
+      worst = { match: `${m.home} vs ${m.away}`, wrongTeam, count: wrongCount, total: allPlayers.filter(p => allPicks[p]?.[m.id]).length };
+    }
+  });
+  return worst;
+}
+
 // Leaderboard
-function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer }) {
+function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastUpdated, isCommissioner }) {
+  const [expandedPlayer, setExpandedPlayer] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState(null);
+  const knockoutMatches = allMatches.filter(m => m.stage === "knockout");
+  const anyResults = allMatches.some(m => m.result);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setRefreshMsg(null);
+    try {
+      const res = await fetch("/api/sync-scores");
+      const data = await res.json();
+      if (data.success) {
+        setRefreshMsg(data.total > 0 ? `✓ Updated ${data.total} result${data.total !== 1 ? "s" : ""}` : "✓ Already up to date");
+      } else {
+        setRefreshMsg(`✗ ${data.error || "Sync failed"}`);
+      }
+    } catch {
+      setRefreshMsg("✗ Could not reach sync server");
+    }
+    setRefreshing(false);
+    setTimeout(() => setRefreshMsg(null), 5000);
+  };
+
   const scored = allPlayers
-    .map(p => ({ name: p, pts: scorePlayer(allPicks[p] || {}, allMatches) }))
+    .map(p => ({
+      name: p,
+      pts: scorePlayer(allPicks[p] || {}, allMatches),
+      maxPts: maxPossibleScore(allPicks[p] || {}, allMatches),
+      breakdown: scoreBreakdown(allPicks[p] || {}, allMatches),
+    }))
     .sort((a, b) => b.pts - a.pts);
 
   const medals = ["🥇", "🥈", "🥉"];
+  const wrongPick = anyResults ? getMostPopularWrongPick(allMatches, allPicks, allPlayers) : null;
 
   return (
     <div>
-      <div style={{ fontSize: 20, fontFamily: "'Bebas Neue', sans-serif", letterSpacing: 2, color: C.accent, marginBottom: 20 }}>LEADERBOARD</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ fontSize: 20, fontFamily: "'Bebas Neue', sans-serif", letterSpacing: 2, color: C.accent }}>LEADERBOARD</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {lastUpdated && (
+            <span style={{ fontSize: 11, color: C.muted, fontFamily: "Inter, sans-serif" }}>🕐 Updated {lastUpdated}</span>
+          )}
+          {refreshMsg && (
+            <span style={{ fontSize: 12, fontWeight: 600, color: refreshMsg.startsWith("✓") ? C.green : C.red, fontFamily: "Inter, sans-serif" }}>{refreshMsg}</span>
+          )}
+          {isCommissioner && (
+            <Btn small variant="ghost" onClick={handleRefresh} disabled={refreshing}>
+              {refreshing ? "⟳ Syncing…" : "⟳ Refresh Scores"}
+            </Btn>
+          )}
+        </div>
+      </div>
+
+      {/* Most popular wrong pick */}
+      {wrongPick && wrongPick.count > 0 && (
+        <div style={{ background: `${C.red}15`, border: `1px solid ${C.red}44`, borderRadius: 10, padding: "10px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 18 }}>😬</span>
+          <div>
+            <span style={{ fontSize: 13, color: C.red, fontWeight: 700 }}>Most popular wrong pick:</span>
+            <span style={{ fontSize: 13, color: C.textDim, marginLeft: 6 }}>{wrongPick.wrongTeam} in {wrongPick.match} — {wrongPick.count}/{wrongPick.total} players got it wrong</span>
+          </div>
+        </div>
+      )}
+
       {scored.length === 0 && <div style={{ color: C.muted, fontSize: 14 }}>No players yet.</div>}
       {scored.map((p, i) => (
-        <div key={p.name} style={{
-          background: p.name === currentPlayer ? `${C.accent}15` : C.card,
-          border: `1px solid ${p.name === currentPlayer ? C.accent : C.border}`,
-          borderRadius: 10,
-          padding: "14px 20px",
-          marginBottom: 8,
-          display: "flex",
-          alignItems: "center",
-          gap: 16,
-        }}>
-          <span style={{ fontSize: 20, width: 28, textAlign: "center" }}>{medals[i] || `${i + 1}`}</span>
-          <span style={{ flex: 1, fontWeight: 600, fontSize: 15, color: p.name === currentPlayer ? C.accent : C.text }}>{p.name} {p.name === currentPlayer ? "(you)" : ""}</span>
-          <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 24, color: C.gold, letterSpacing: 1 }}>{p.pts}</span>
-          <span style={{ fontSize: 12, color: C.muted }}>pts</span>
+        <div key={p.name} style={{ marginBottom: 8 }}>
+          <div
+            onClick={() => setExpandedPlayer(expandedPlayer === p.name ? null : p.name)}
+            style={{
+              background: p.name === currentPlayer ? `${C.accent}15` : C.card,
+              border: `1px solid ${p.name === currentPlayer ? C.accent : C.border}`,
+              borderRadius: expandedPlayer === p.name ? "10px 10px 0 0" : 10,
+              padding: "14px 20px",
+              display: "flex", alignItems: "center", gap: 16,
+              cursor: "pointer",
+            }}
+          >
+            <span style={{ fontSize: 20, width: 28, textAlign: "center" }}>{medals[i] || `${i + 1}`}</span>
+            <span style={{ flex: 1, fontWeight: 600, fontSize: 15, color: p.name === currentPlayer ? C.accent : C.text }}>
+              {p.name}{p.name === currentPlayer ? " (you)" : ""}
+            </span>
+            {anyResults && (
+              <span style={{ fontSize: 11, color: C.muted }}>max {p.maxPts}</span>
+            )}
+            <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 24, color: C.gold, letterSpacing: 1 }}>{p.pts}</span>
+            <span style={{ fontSize: 12, color: C.muted }}>pts</span>
+            <span style={{ fontSize: 12, color: C.muted }}>{expandedPlayer === p.name ? "▲" : "▼"}</span>
+          </div>
+
+          {/* Breakdown popup */}
+          {expandedPlayer === p.name && (
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 10px 10px", padding: "12px 20px" }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ background: C.card, borderRadius: 8, padding: "8px 14px", flex: 1, minWidth: 100 }}>
+                  <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, marginBottom: 2 }}>GROUP STAGE</div>
+                  <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, color: C.accent }}>{p.breakdown.groupPts} pts</div>
+                  <div style={{ fontSize: 11, color: C.textDim }}>{p.breakdown.groupCorrect}/{p.breakdown.groupTotal} correct</div>
+                </div>
+                {Object.entries(p.breakdown.koBreakdown).filter(([, v]) => v > 0).map(([round, pts]) => (
+                  <div key={round} style={{ background: C.card, borderRadius: 8, padding: "8px 14px", flex: 1, minWidth: 80 }}>
+                    <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, marginBottom: 2 }}>{round === "F" ? "FINAL" : round}</div>
+                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, color: C.gold }}>{pts} pts</div>
+                  </div>
+                ))}
+                {Object.values(p.breakdown.koBreakdown).every(v => v === 0) && (
+                  <div style={{ fontSize: 12, color: C.muted, alignSelf: "center" }}>No knockout points yet</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -1249,7 +1431,7 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer }) {
 }
 
 // ── COMMISSIONER VIEW ──────────────────────────────────────────────────────
-function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, groupLocked, groupPicksLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLockGroupPicks, onRenamePlayer, onLogout, activeTab, setActiveTab, addPlayer, pins, paid, onTogglePaid, onResetPin }) {
+function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, groupLocked, groupPicksLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLockGroupPicks, onRenamePlayer, onLogout, activeTab, setActiveTab, addPlayer, pins, paid, onTogglePaid, onResetPin, lastUpdated }) {
 
   const tabs = [
     { id: "groups", label: "Group Results" },
@@ -1299,7 +1481,7 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
           />
         )}
         {activeTab === "leaderboard" && (
-          <LeaderboardTab allPlayers={players} allPicks={picks} allMatches={allMatches} currentPlayer="" />
+          <LeaderboardTab allPlayers={players} allPicks={picks} allMatches={allMatches} currentPlayer="" isCommissioner={true} lastUpdated={lastUpdated ? (() => { const d = new Date(lastUpdated); const now = new Date(); const diffMins = Math.floor((now - d) / 60000); if (diffMins < 1) return "just now"; if (diffMins < 60) return `${diffMins}m ago`; const diffHrs = Math.floor(diffMins / 60); return diffHrs < 24 ? `${diffHrs}h ago` : d.toLocaleDateString(); })() : null} />
         )}
         {activeTab === "players" && (
           <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} paid={paid} onTogglePaid={onTogglePaid} onResetPin={onResetPin} onRenamePlayer={onRenamePlayer} />
