@@ -4,8 +4,19 @@
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <title>WC 2026 Picks</title>
+
+    <!-- PWA / Home screen -->
+    <meta name="application-name" content="WC 2026 Picks"/>
+    <meta name="apple-mobile-web-app-capable" content="yes"/>
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+    <meta name="apple-mobile-web-app-title" content="WC Picks"/>
+    <meta name="theme-color" content="#0a0e1a"/>
+    <link rel="manifest" href="/manifest.json"/>
+
+    <!-- Fallback icon for apple -->
+    <link rel="apple-touch-icon" href="/icon-192.png"/>
   </head>
-  <body>
+  <body style="background:#0a0e1a;margin:0">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
