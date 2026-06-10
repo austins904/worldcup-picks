@@ -435,6 +435,12 @@ export default function App() {
       paid={paid}
       onTogglePaid={(name) => { const updated = { ...paid, [name]: !paid[name] }; setPaid(updated); }}
       onResetPin={(name) => { const updated = { ...pins }; delete updated[name]; setPins(updated); }}
+      onRemovePlayer={(name) => {
+        setPlayers(players.filter(p => p !== name));
+        const newPicks = { ...picks }; delete newPicks[name]; setPicks(newPicks);
+        const newPins = { ...pins }; delete newPins[name]; setPins(newPins);
+        const newPaid = { ...paid }; delete newPaid[name]; setPaid(newPaid);
+      }}
       lastUpdated={lastUpdated}
     />
   );
@@ -452,6 +458,7 @@ export default function App() {
       knockoutLocked={knockoutLocked}
       groupPicksLocked={groupPicksLocked}
       lastUpdated={lastUpdated}
+      isPaid={!!paid[currentUser.name]}
       onPick={(matchId, result) => {
         const updated = { ...picks, [currentUser.name]: { ...(picks[currentUser.name] || {}), [matchId]: result } };
         setPicks(updated);
@@ -644,7 +651,8 @@ function LoginScreen({ players, pins, onLogin, onSetPin, onAddPlayer }) {
           )}
         </div>
 
-        {/* Add player (quick) */}
+        {/* Add player (quick) — hidden after lock */}
+        {!isAutoLocked() && (
         <div style={{ marginTop: 20, background: C.surface, borderRadius: 12, padding: 16, border: `1px solid ${C.border}` }}>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: C.muted, marginBottom: 10, fontWeight: 600, letterSpacing: 1 }}>NEW PLAYER? ADD YOUR NAME</div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -658,13 +666,14 @@ function LoginScreen({ players, pins, onLogin, onSetPin, onAddPlayer }) {
             <Btn small onClick={() => { if (newPlayer.trim()) { onAddPlayer(newPlayer.trim()); setNewPlayer(""); } }}>ADD</Btn>
           </div>
         </div>
+        )}
       </div>
     </div>
   );
 }
 
 // ── PLAYER VIEW ────────────────────────────────────────────────────────────
-function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, allPicks, allMatches, knockoutOpen, knockoutLocked, groupPicksLocked, lastUpdated, onPick, onRenamePlayer, onLogout, activeTab, setActiveTab }) {
+function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, allPicks, allMatches, knockoutOpen, knockoutLocked, groupPicksLocked, lastUpdated, isPaid, onPick, onRenamePlayer, onLogout, activeTab, setActiveTab }) {
   const myScore = scorePlayer(picks, allMatches);
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(player);
@@ -698,6 +707,17 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
     setNameErr("");
   };
 
+  // Compute rank
+  const myRank = (() => {
+    const scores = allPlayers.map(p => scorePlayer(allPicks[p] || {}, allMatches)).sort((a, b) => b - a);
+    const rank = scores.indexOf(myScore) + 1;
+    if (rank === 1) return "🥇 1st";
+    if (rank === 2) return "🥈 2nd";
+    if (rank === 3) return "🥉 3rd";
+    const suffix = rank === 4 ? "th" : rank === 5 ? "th" : rank % 10 === 1 ? "st" : rank % 10 === 2 ? "nd" : rank % 10 === 3 ? "rd" : "th";
+    return `${rank}${suffix}`;
+  })();
+
   const tabs = [
     { id: "groups", label: "Group Stage" },
     { id: "knockout", label: "Knockout" },
@@ -708,6 +728,13 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
   return (
     <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "Inter, sans-serif", color: C.text }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap');`}</style>
+      {/* Unpaid banner */}
+      {isPaid === false && (
+        <div style={{ background: `${C.red}22`, borderBottom: `1px solid ${C.red}55`, padding: "8px 20px", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 16 }}>💰</span>
+          <span style={{ fontSize: 13, color: C.red, fontWeight: 600 }}>Entry fee of $20 not yet paid. Please pay before the first kickoff on Thursday, June 11 at 3:00 PM ET.</span>
+        </div>
+      )}
       {/* Header */}
       <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 20px" }}>
         <div style={{ maxWidth: 800, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
@@ -734,7 +761,7 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
                   <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{player}</div>
                   <button onClick={() => { setEditingName(true); setNameVal(player); }} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 12, padding: 0 }} title="Edit name">✏️</button>
                 </div>
-                <div style={{ fontSize: 12, color: C.gold, fontWeight: 700 }}>{myScore} pts</div>
+                <div style={{ fontSize: 12, color: C.gold, fontWeight: 700 }}>{myRank} · {myScore} pts</div>
               </div>
             )}
             <Btn small variant="ghost" onClick={onLogout}>Logout</Btn>
@@ -1051,6 +1078,8 @@ function MatchPickRow({ match, pick, onPick, allowDraw, locked }) {
   const wrong = hasResult && pick && pick !== match.result;
   const isLocked = locked || hasResult;
 
+  const winnerTeam = hasResult ? (match.result === "home" ? match.home : match.result === "away" ? match.away : "Draw") : null;
+
   const btn = (value, label) => {
     const active = pick === value;
     const isCorrect = hasResult && value === match.result;
@@ -1092,12 +1121,19 @@ function MatchPickRow({ match, pick, onPick, allowDraw, locked }) {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 16 }}>{f(match.home)}</span>
-          <span style={{ fontWeight: 600, fontSize: 13, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{match.home || "TBD"}</span>
+          <span style={{ fontWeight: 600, fontSize: 13, color: match.result === "home" ? C.green : C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{match.home || "TBD"}</span>
           <span style={{ color: C.muted, fontSize: 12, margin: "0 4px" }}>vs</span>
           <span style={{ fontSize: 16 }}>{f(match.away)}</span>
-          <span style={{ fontWeight: 600, fontSize: 13, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{match.away || "TBD"}</span>
+          <span style={{ fontWeight: 600, fontSize: 13, color: match.result === "away" ? C.green : C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{match.away || "TBD"}</span>
         </div>
-        {match.time && <span style={{ fontSize: 11, color: C.muted }}>Group {match.group} · {match.time}</span>}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {match.time && <span style={{ fontSize: 11, color: C.muted }}>Group {match.group} · {match.time}</span>}
+          {hasResult && (
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.green }}>
+              ✓ {winnerTeam === "Draw" ? "Draw" : `${f(winnerTeam)} ${winnerTeam} wins`}
+            </span>
+          )}
+        </div>
       </div>
       {/* Picks */}
       {!noTeams && (
@@ -1431,7 +1467,7 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastU
 }
 
 // ── COMMISSIONER VIEW ──────────────────────────────────────────────────────
-function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, groupLocked, groupPicksLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLockGroupPicks, onRenamePlayer, onLogout, activeTab, setActiveTab, addPlayer, pins, paid, onTogglePaid, onResetPin, lastUpdated }) {
+function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, groupLocked, groupPicksLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLockGroupPicks, onRenamePlayer, onRemovePlayer, onLogout, activeTab, setActiveTab, addPlayer, pins, paid, onTogglePaid, onResetPin, lastUpdated }) {
 
   const tabs = [
     { id: "groups", label: "Group Results" },
@@ -1484,7 +1520,7 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
           <LeaderboardTab allPlayers={players} allPicks={picks} allMatches={allMatches} currentPlayer="" isCommissioner={true} lastUpdated={lastUpdated ? (() => { const d = new Date(lastUpdated); const now = new Date(); const diffMins = Math.floor((now - d) / 60000); if (diffMins < 1) return "just now"; if (diffMins < 60) return `${diffMins}m ago`; const diffHrs = Math.floor(diffMins / 60); return diffHrs < 24 ? `${diffHrs}h ago` : d.toLocaleDateString(); })() : null} />
         )}
         {activeTab === "players" && (
-          <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} paid={paid} onTogglePaid={onTogglePaid} onResetPin={onResetPin} onRenamePlayer={onRenamePlayer} />
+          <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} paid={paid} onTogglePaid={onTogglePaid} onResetPin={onResetPin} onRenamePlayer={onRenamePlayer} onRemovePlayer={onRemovePlayer} />
         )}
       </div>
     </div>
@@ -1634,11 +1670,13 @@ function CommKnockout({ knockoutMatches, knockoutOpen, knockoutLocked, onSetTeam
   );
 }
 
-function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onResetPin, onRenamePlayer }) {
+function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onResetPin, onRenamePlayer, onRemovePlayer }) {
   const [newName, setNewName] = useState("");
   const [editingName, setEditingName] = useState(null);
   const [editVal, setEditVal] = useState("");
   const [editErr, setEditErr] = useState("");
+  const [confirmRemove, setConfirmRemove] = useState(null);
+  const locked = new Date() >= new Date("2026-06-11T19:00:00Z");
 
   const handleRename = (oldName) => {
     const trimmed = editVal.trim();
@@ -1652,9 +1690,13 @@ function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onRe
 
   const paidCount = players.filter(p => paid[p]).length;
   const totalPot = paidCount * 20;
-  const payout1 = Math.floor(totalPot * 0.65);
-  const payout2 = Math.floor(totalPot * 0.25);
-  const payout3 = totalPot - payout1 - payout2;
+  const roundTo5 = v => Math.round(v / 5) * 5;
+  const raw1 = Math.floor(totalPot * 0.65);
+  const raw2 = Math.floor(totalPot * 0.25);
+  const raw3 = totalPot - raw1 - raw2;
+  const payout1 = roundTo5(raw1);
+  const payout2 = roundTo5(raw2);
+  const payout3 = roundTo5(raw3);
 
   return (
     <div>
@@ -1709,6 +1751,7 @@ function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onRe
         )}
       </div>
 
+      {!locked && (
       <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
         <input
           placeholder="Add player name"
@@ -1719,6 +1762,8 @@ function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onRe
         />
         <Btn onClick={() => { if (newName.trim()) { addPlayer(newName.trim()); setNewName(""); } }}>Add Player</Btn>
       </div>
+      )}
+      {locked && <div style={{ fontSize: 12, color: C.muted, fontFamily: "Inter, sans-serif", marginBottom: 16 }}>🔒 Registration closed — tournament has started.</div>}
 
       {players.length === 0 && <div style={{ color: C.muted, fontSize: 14 }}>No players yet.</div>}
       {players.map(p => (
@@ -1755,6 +1800,15 @@ function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onRe
                 <span style={{ fontSize: 12, color: C.muted }}>{Object.keys(picks[p] || {}).length} picks</span>
                 {pins[p] ? <span style={{ fontSize: 11, color: C.green, fontWeight: 600 }}>🔐 PIN set</span> : <span style={{ fontSize: 11, color: C.muted }}>No PIN</span>}
                 {pins[p] && <Btn small variant="danger" onClick={() => onResetPin(p)}>Reset PIN</Btn>}
+                {confirmRemove === p ? (
+                  <>
+                    <span style={{ fontSize: 12, color: C.red, fontWeight: 600 }}>Remove?</span>
+                    <Btn small variant="danger" onClick={() => { onRemovePlayer(p); setConfirmRemove(null); }}>Yes</Btn>
+                    <Btn small variant="ghost" onClick={() => setConfirmRemove(null)}>No</Btn>
+                  </>
+                ) : (
+                  <Btn small variant="danger" onClick={() => setConfirmRemove(p)}>Remove</Btn>
+                )}
               </div>
             </div>
           )}
