@@ -372,10 +372,22 @@ export default function App() {
       if (gl !== null) setGroupLockedState(gl);
       if (pd) setPaidState(pd);
       if (lu) setLastUpdatedState(lu);
-      // Load picks per player
+      // Load picks per player — with migration from old combined wc_picks format
       if (playerList.length) {
-        const allPicksData = await loadAllPicks(playerList);
-        setPicksState(allPicksData);
+        // First check if old combined picks exist
+        const oldPicks = await loadState("wc_picks");
+        if (oldPicks && typeof oldPicks === "object" && Object.keys(oldPicks).length > 0) {
+          // Migrate old picks to per-player keys
+          await Promise.all(Object.entries(oldPicks).map(([name, playerPicks]) =>
+            savePlayerPicks(name, playerPicks)
+          ));
+          // Delete old key by saving empty object (can't delete via REST easily)
+          await saveState("wc_picks", {});
+          setPicksState(oldPicks);
+        } else {
+          const allPicksData = await loadAllPicks(playerList);
+          setPicksState(allPicksData);
+        }
       }
       setLoading(false);
     })();
