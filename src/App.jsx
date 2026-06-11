@@ -184,20 +184,47 @@ const SB_HEADERS = { "Content-Type": "application/json", "apikey": SUPABASE_KEY,
 
 async function loadState(key) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/wc_state?key=eq.${key}&select=value`, { headers: SB_HEADERS });
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/wc_state?key=eq.${encodeURIComponent(key)}&select=value`, { headers: SB_HEADERS });
     const rows = await res.json();
     return rows?.[0]?.value ?? null;
   } catch { return null; }
 }
 
-async function saveState(key, value) {
-  try {
-    await fetch(`${SUPABASE_URL}/rest/v1/wc_state`, {
-      method: "POST",
-      headers: { ...SB_HEADERS, "Prefer": "resolution=merge-duplicates" },
-      body: JSON.stringify({ key, value }),
-    });
-  } catch (e) { console.error("Supabase save error", e); }
+// Save with retry — tries up to 3 times with exponential backoff
+async function saveState(key, value, attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/wc_state`, {
+        method: "POST",
+        headers: { ...SB_HEADERS, "Prefer": "resolution=merge-duplicates" },
+        body: JSON.stringify({ key, value }),
+      });
+      if (res.ok) return true;
+    } catch (e) {
+      if (i === attempts - 1) console.error("Supabase save failed after retries:", key, e);
+    }
+    // Wait before retry: 500ms, 1000ms
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, 500 * (i + 1)));
+  }
+  return false;
+}
+
+// Per-player picks key — isolates each player's picks into its own row
+const playerPicksKey = (name) => `wc_picks_${name.toLowerCase().replace(/\s+/g, "_")}`;
+
+// Load all players' picks into the combined picks object
+async function loadAllPicks(players) {
+  if (!players || players.length === 0) return {};
+  const results = await Promise.all(players.map(async name => {
+    const val = await loadState(playerPicksKey(name));
+    return [name, val || {}];
+  }));
+  return Object.fromEntries(results);
+}
+
+// Save a single player's picks
+async function savePlayerPicks(name, playerPicks) {
+  return saveState(playerPicksKey(name), playerPicks);
 }
 
 // ── Scoring ────────────────────────────────────────────────────────────────
@@ -324,11 +351,10 @@ export default function App() {
   // Load from storage
   useEffect(() => {
     (async () => {
-      const [p, gm, km, pk, ko, kl, pn, gl, pd, lu] = await Promise.all([
+      const [p, gm, km, ko, kl, pn, gl, pd, lu] = await Promise.all([
         loadState("wc_players"),
         loadState("wc_group_matches"),
         loadState("wc_knockout_matches"),
-        loadState("wc_picks"),
         loadState("wc_knockout_open"),
         loadState("wc_knockout_locked"),
         loadState("wc_pins"),
@@ -336,25 +362,48 @@ export default function App() {
         loadState("wc_paid"),
         loadState("wc_last_updated"),
       ]);
-      if (p) setPlayersState(p);
+      const playerList = p || [];
+      if (playerList.length) setPlayersState(playerList);
       if (gm) setGroupMatchesState(gm);
       if (km) setKnockoutMatchesState(km);
-      if (pk) setPicksState(pk);
       if (ko !== null) setKnockoutOpenState(ko);
       if (kl !== null) setKnockoutLockedState(kl);
       if (pn) setPinsState(pn);
       if (gl !== null) setGroupLockedState(gl);
       if (pd) setPaidState(pd);
       if (lu) setLastUpdatedState(lu);
+      // Load picks per player
+      if (playerList.length) {
+        const allPicksData = await loadAllPicks(playerList);
+        setPicksState(allPicksData);
+      }
       setLoading(false);
     })();
   }, []);
 
-  // Persist helpers — Supabase stores jsonb so no JSON.stringify needed
-  const setPlayers = (v) => { setPlayersState(v); saveState("wc_players", v); };
+  // Persist helpers
+  const setPlayers = async (v) => {
+    setPlayersState(v);
+    saveState("wc_players", v);
+    // Reload picks for any new players
+    const newNames = v.filter(name => !picks[name]);
+    if (newNames.length > 0) {
+      const newPicksData = await loadAllPicks(newNames);
+      setPicksState(prev => ({ ...prev, ...newPicksData }));
+    }
+  };
   const setGroupMatches = (v) => { setGroupMatchesState(v); saveState("wc_group_matches", v); const ts = new Date().toISOString(); setLastUpdatedState(ts); saveState("wc_last_updated", ts); };
   const setKnockoutMatches = (v) => { setKnockoutMatchesState(v); saveState("wc_knockout_matches", v); const ts = new Date().toISOString(); setLastUpdatedState(ts); saveState("wc_last_updated", ts); };
-  const setPicks = (v) => { setPicksState(v); saveState("wc_picks", v); };
+  // setPicks now saves per player — pass playerName to only write that player's row
+  const setPicks = (v, changedPlayer) => {
+    setPicksState(v);
+    if (changedPlayer && v[changedPlayer]) {
+      savePlayerPicks(changedPlayer, v[changedPlayer]);
+    } else {
+      // Fallback: save all players
+      Object.keys(v).forEach(name => savePlayerPicks(name, v[name]));
+    }
+  };
   const setGroupLocked = (v) => { setGroupLockedState(v); saveState("wc_group_locked", v); };
   const setKnockoutOpen = (v) => { setKnockoutOpenState(v); saveState("wc_knockout_open", v); };
   const setKnockoutLocked = (v) => { setKnockoutLockedState(v); saveState("wc_knockout_locked", v); };
@@ -418,10 +467,10 @@ export default function App() {
       onRenamePlayer={(oldName, newName) => {
         // Update players list
         setPlayers(players.map(p => p === oldName ? newName : p));
-        // Migrate picks
+        // Migrate picks — save under new name key
         const newPicks = { ...picks };
         if (newPicks[oldName]) { newPicks[newName] = newPicks[oldName]; delete newPicks[oldName]; }
-        setPicks(newPicks);
+        setPicks(newPicks, newName);
         // Migrate pins
         const newPins = { ...pins };
         if (newPins[oldName]) { newPins[newName] = newPins[oldName]; delete newPins[oldName]; }
@@ -461,7 +510,7 @@ export default function App() {
       isPaid={!!paid[currentUser.name]}
       onPick={(matchId, result) => {
         const updated = { ...picks, [currentUser.name]: { ...(picks[currentUser.name] || {}), [matchId]: result } };
-        setPicks(updated);
+        setPicks(updated, currentUser.name);
       }}
       onRenamePlayer={(oldName, newName) => {
         setPlayers(players.map(p => p === oldName ? newName : p));
