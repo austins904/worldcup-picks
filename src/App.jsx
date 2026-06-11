@@ -652,7 +652,7 @@ function LoginScreen({ players, pins, onLogin, onSetPin, onAddPlayer }) {
         </div>
 
         {/* Add player (quick) — hidden after lock */}
-        {!isAutoLocked() && (
+        {new Date() < new Date("2026-06-11T19:00:00Z") && (
         <div style={{ marginTop: 20, background: C.surface, borderRadius: 12, padding: 16, border: `1px solid ${C.border}` }}>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: C.muted, marginBottom: 10, fontWeight: 600, letterSpacing: 1 }}>NEW PLAYER? ADD YOUR NAME</div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -729,7 +729,7 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
     <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "Inter, sans-serif", color: C.text }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap');`}</style>
       {/* Unpaid banner */}
-      {isPaid === false && (
+      {!isPaid && (
         <div style={{ background: `${C.red}22`, borderBottom: `1px solid ${C.red}55`, padding: "8px 20px", display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 16 }}>💰</span>
           <span style={{ fontSize: 13, color: C.red, fontWeight: 600 }}>Entry fee of $20 not yet paid. Please pay before the first kickoff on Thursday, June 11 at 3:00 PM ET.</span>
