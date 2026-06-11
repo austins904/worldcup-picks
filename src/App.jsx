@@ -524,6 +524,11 @@ export default function App() {
         const newPaid = { ...paid }; delete newPaid[name]; setPaid(newPaid);
       }}
       lastUpdated={lastUpdated}
+      onMatchesReloaded={(gm, km, lu) => {
+        if (gm) setGroupMatchesState(gm);
+        if (km) setKnockoutMatchesState(km);
+        if (lu) setLastUpdatedState(lu);
+      }}
     />
   );
 
@@ -559,6 +564,11 @@ export default function App() {
       onLogout={() => { setCurrentUser(null); setView("login"); }}
       activeTab={activeTab}
       setActiveTab={setActiveTab}
+      onMatchesReloaded={(gm, km, lu) => {
+        if (gm) setGroupMatchesState(gm);
+        if (km) setKnockoutMatchesState(km);
+        if (lu) setLastUpdatedState(lu);
+      }}
     />
   );
 }
@@ -756,7 +766,7 @@ function LoginScreen({ players, pins, onLogin, onSetPin, onAddPlayer }) {
 }
 
 // ── PLAYER VIEW ────────────────────────────────────────────────────────────
-function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, allPicks, allMatches, knockoutOpen, knockoutLocked, groupPicksLocked, lastUpdated, isPaid, paid, onPick, onRenamePlayer, onLogout, activeTab, setActiveTab }) {
+function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, allPicks, allMatches, knockoutOpen, knockoutLocked, groupPicksLocked, lastUpdated, isPaid, paid, onPick, onRenamePlayer, onLogout, activeTab, setActiveTab, onMatchesReloaded }) {
   const myScore = scorePlayer(picks, allMatches);
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(player);
@@ -888,7 +898,7 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
           <CompareTab groupMatches={groupMatches} knockoutMatches={knockoutMatches} allPicks={allPicks} allPlayers={allPlayers} currentPlayer={player} groupPicksLocked={groupPicksLocked} knockoutLocked={knockoutLocked} />
         )}
         {activeTab === "leaderboard" && (
-          <LeaderboardTab allPlayers={allPlayers} allPicks={allPicks} allMatches={allMatches} currentPlayer={player} lastUpdated={lastUpdatedStr} isCommissioner={false} groupPicksLocked={groupPicksLocked} paid={paid} />
+          <LeaderboardTab allPlayers={allPlayers} allPicks={allPicks} allMatches={allMatches} currentPlayer={player} lastUpdated={lastUpdatedStr} isCommissioner={false} groupPicksLocked={groupPicksLocked} paid={paid} onMatchesReloaded={onMatchesReloaded} />
         )}
       </div>
     </div>
@@ -1609,7 +1619,7 @@ function getMostPopularWrongPick(allMatches, allPicks, allPlayers) {
 }
 
 // Leaderboard
-function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastUpdated, isCommissioner, groupPicksLocked, paid }) {
+function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastUpdated, isCommissioner, groupPicksLocked, paid, onMatchesReloaded }) {
   const [expandedPlayer, setExpandedPlayer] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState(null);
@@ -1630,16 +1640,24 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastU
     try {
       const res = await fetch("/api/sync-scores");
       const data = await res.json();
-      if (data.success) {
-        setRefreshMsg(data.total > 0 ? `✓ Updated ${data.total} result${data.total !== 1 ? "s" : ""}` : "✓ Already up to date");
-      } else if (data.message) {
-        // Function ran fine but no data to update yet
-        setRefreshMsg("✓ No new results yet");
+      if (data.success || data.message) {
+        // Reload match data from Supabase so UI reflects any updates
+        const [gm, km, lu] = await Promise.all([
+          loadState("wc_group_matches"),
+          loadState("wc_knockout_matches"),
+          loadState("wc_last_updated"),
+        ]);
+        if (onMatchesReloaded) onMatchesReloaded(gm, km, lu);
+        if (data.success) {
+          setRefreshMsg(data.total > 0 ? `✓ Updated ${data.total} result${data.total !== 1 ? "s" : ""}` : "✓ Already up to date");
+        } else {
+          setRefreshMsg("✓ No new results yet");
+        }
       } else {
         setRefreshMsg(`✗ ${data.error || "Sync failed"}`);
       }
-    } catch {
-      setRefreshMsg("✗ Could not reach sync server");
+    } catch (e) {
+      setRefreshMsg(`✗ ${e.message || "Could not reach sync server"}`);
     }
     setRefreshing(false);
     setTimeout(() => setRefreshMsg(null), 5000);
@@ -1762,7 +1780,7 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastU
 }
 
 // ── COMMISSIONER VIEW ──────────────────────────────────────────────────────
-function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, groupLocked, groupPicksLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLockGroupPicks, onRenamePlayer, onRemovePlayer, onLogout, activeTab, setActiveTab, addPlayer, pins, paid, onTogglePaid, onResetPin, lastUpdated }) {
+function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, groupLocked, groupPicksLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLockGroupPicks, onRenamePlayer, onRemovePlayer, onLogout, activeTab, setActiveTab, addPlayer, pins, paid, onTogglePaid, onResetPin, lastUpdated, onMatchesReloaded }) {
 
   const tabs = [
     { id: "groups", label: "Group Results" },
@@ -1812,7 +1830,7 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
           />
         )}
         {activeTab === "leaderboard" && (
-          <LeaderboardTab allPlayers={players} allPicks={picks} allMatches={allMatches} currentPlayer="" isCommissioner={true} groupPicksLocked={groupPicksLocked} paid={paid} lastUpdated={lastUpdated ? (() => { const d = new Date(lastUpdated); const now = new Date(); const diffMins = Math.floor((now - d) / 60000); if (diffMins < 1) return "just now"; if (diffMins < 60) return `${diffMins}m ago`; const diffHrs = Math.floor(diffMins / 60); return diffHrs < 24 ? `${diffHrs}h ago` : d.toLocaleDateString(); })() : null} />
+          <LeaderboardTab allPlayers={players} allPicks={picks} allMatches={allMatches} currentPlayer="" isCommissioner={true} groupPicksLocked={groupPicksLocked} paid={paid} onMatchesReloaded={onMatchesReloaded} lastUpdated={lastUpdated ? (() => { const d = new Date(lastUpdated); const now = new Date(); const diffMins = Math.floor((now - d) / 60000); if (diffMins < 1) return "just now"; if (diffMins < 60) return `${diffMins}m ago`; const diffHrs = Math.floor(diffMins / 60); return diffHrs < 24 ? `${diffHrs}h ago` : d.toLocaleDateString(); })() : null} />
         )}
         {activeTab === "players" && (
           <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} paid={paid} onTogglePaid={onTogglePaid} onResetPin={onResetPin} onRenamePlayer={onRenamePlayer} onRemovePlayer={onRemovePlayer} />
