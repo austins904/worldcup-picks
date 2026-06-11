@@ -216,7 +216,11 @@ const playerPicksKey = (name) => `wc_picks_${name.toLowerCase().replace(/\s+/g, 
 async function loadAllPicks(players) {
   if (!players || players.length === 0) return {};
   const results = await Promise.all(players.map(async name => {
-    const val = await loadState(playerPicksKey(name));
+    // Try sanitized key first, then raw name as fallback
+    let val = await loadState(playerPicksKey(name));
+    if (!val || Object.keys(val).length === 0) {
+      val = await loadState(`wc_picks_${name}`);
+    }
     return [name, val || {}];
   }));
   return Object.fromEntries(results);
@@ -372,21 +376,35 @@ export default function App() {
       if (gl !== null) setGroupLockedState(gl);
       if (pd) setPaidState(pd);
       if (lu) setLastUpdatedState(lu);
-      // Load picks per player — with migration from old combined wc_picks format
+      // Load picks — check both old combined key and new per-player keys
       if (playerList.length) {
-        // First check if old combined picks exist
+        // Load per-player keys
+        const perPlayerPicks = await loadAllPicks(playerList);
+        // Also check old combined key as fallback
         const oldPicks = await loadState("wc_picks");
-        if (oldPicks && typeof oldPicks === "object" && Object.keys(oldPicks).length > 0) {
-          // Migrate old picks to per-player keys
-          await Promise.all(Object.entries(oldPicks).map(([name, playerPicks]) =>
-            savePlayerPicks(name, playerPicks)
-          ));
-          // Delete old key by saving empty object (can't delete via REST easily)
-          await saveState("wc_picks", {});
-          setPicksState(oldPicks);
-        } else {
-          const allPicksData = await loadAllPicks(playerList);
-          setPicksState(allPicksData);
+        const oldPicksValid = oldPicks && typeof oldPicks === "object" && Object.keys(oldPicks).length > 0;
+
+        // Merge: per-player wins if it has data, otherwise fall back to old format
+        const merged = {};
+        playerList.forEach(name => {
+          const perPlayer = perPlayerPicks[name];
+          const old = oldPicksValid ? oldPicks[name] : null;
+          // Use whichever has more picks
+          const perPlayerCount = perPlayer ? Object.keys(perPlayer).length : 0;
+          const oldCount = old ? Object.keys(old).length : 0;
+          merged[name] = perPlayerCount >= oldCount ? (perPlayer || {}) : (old || {});
+        });
+
+        setPicksState(merged);
+
+        // If old picks had data, migrate to per-player and clear old key
+        if (oldPicksValid) {
+          await Promise.all(playerList.map(name => {
+            if (merged[name] && Object.keys(merged[name]).length > 0) {
+              return savePlayerPicks(name, merged[name]);
+            }
+          }));
+          await saveState("wc_picks", null);
         }
       }
       setLoading(false);
