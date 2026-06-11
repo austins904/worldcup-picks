@@ -368,6 +368,9 @@ export default function App() {
       ]);
       const playerList = p || [];
       if (playerList.length) setPlayersState(playerList);
+      // Write group/knockout matches to Supabase if not there yet (needed for cron job)
+      if (!gm) saveState("wc_group_matches", generateGroupMatches());
+      if (!km) saveState("wc_knockout_matches", generateKnockoutMatches());
       if (gm) setGroupMatchesState(gm);
       if (km) setKnockoutMatchesState(km);
       if (ko !== null) setKnockoutOpenState(ko);
@@ -538,6 +541,7 @@ export default function App() {
       groupPicksLocked={groupPicksLocked}
       lastUpdated={lastUpdated}
       isPaid={!!paid[currentUser.name]}
+      paid={paid}
       onPick={(matchId, result) => {
         const updated = { ...picks, [currentUser.name]: { ...(picks[currentUser.name] || {}), [matchId]: result } };
         setPicks(updated, currentUser.name);
@@ -752,7 +756,7 @@ function LoginScreen({ players, pins, onLogin, onSetPin, onAddPlayer }) {
 }
 
 // ── PLAYER VIEW ────────────────────────────────────────────────────────────
-function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, allPicks, allMatches, knockoutOpen, knockoutLocked, groupPicksLocked, lastUpdated, isPaid, onPick, onRenamePlayer, onLogout, activeTab, setActiveTab }) {
+function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, allPicks, allMatches, knockoutOpen, knockoutLocked, groupPicksLocked, lastUpdated, isPaid, paid, onPick, onRenamePlayer, onLogout, activeTab, setActiveTab }) {
   const myScore = scorePlayer(picks, allMatches);
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(player);
@@ -800,7 +804,8 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
   const tabs = [
     { id: "groups", label: "Group Stage" },
     { id: "knockout", label: "Knockout" },
-    { id: "community", label: "Community Picks" },
+    { id: "community", label: "Community" },
+    { id: "compare", label: "Compare" },
     { id: "leaderboard", label: "Leaderboard" },
   ];
 
@@ -879,8 +884,11 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
         {activeTab === "community" && (
           <CommunityPicksTab groupMatches={groupMatches} knockoutMatches={knockoutMatches} allPicks={allPicks} allPlayers={allPlayers} groupPicksLocked={groupPicksLocked} knockoutLocked={knockoutLocked} />
         )}
+        {activeTab === "compare" && (
+          <CompareTab groupMatches={groupMatches} knockoutMatches={knockoutMatches} allPicks={allPicks} allPlayers={allPlayers} currentPlayer={player} groupPicksLocked={groupPicksLocked} knockoutLocked={knockoutLocked} />
+        )}
         {activeTab === "leaderboard" && (
-          <LeaderboardTab allPlayers={allPlayers} allPicks={allPicks} allMatches={allMatches} currentPlayer={player} lastUpdated={lastUpdatedStr} isCommissioner={false} />
+          <LeaderboardTab allPlayers={allPlayers} allPicks={allPicks} allMatches={allMatches} currentPlayer={player} lastUpdated={lastUpdatedStr} isCommissioner={false} groupPicksLocked={groupPicksLocked} paid={paid} />
         )}
       </div>
     </div>
@@ -1363,6 +1371,182 @@ function CommunityPicksTab({ groupMatches, knockoutMatches, allPicks, allPlayers
   );
 }
 
+// ── COMPARE TAB ────────────────────────────────────────────────────────────
+function CompareTab({ groupMatches, knockoutMatches, allPicks, allPlayers, currentPlayer, groupPicksLocked, knockoutLocked }) {
+  const [selected, setSelected] = useState([]);
+  const [section, setSection] = useState("groups");
+
+  if (!groupPicksLocked) return (
+    <div style={{ textAlign: "center", padding: 60 }}>
+      <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
+      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 24, color: C.muted, letterSpacing: 3 }}>AVAILABLE AFTER LOCK</div>
+      <div style={{ color: C.textDim, marginTop: 8, fontSize: 14 }}>Pick comparisons are revealed after group stage locks at 3:00 PM ET on June 11.</div>
+    </div>
+  );
+
+  const togglePlayer = (name) => {
+    setSelected(prev => prev.includes(name) ? prev.filter(p => p !== name) : [...prev, name]);
+  };
+
+  const comparePlayers = [currentPlayer, ...selected.filter(p => p !== currentPlayer)];
+  const otherPlayers = allPlayers.filter(p => p !== currentPlayer);
+
+  const byDate = {};
+  groupMatches.forEach(m => {
+    if (!byDate[m.date]) byDate[m.date] = [];
+    byDate[m.date].push(m);
+  });
+
+  const pickLabel = (pick, match) => {
+    if (!pick) return { label: "—", color: C.muted };
+    if (pick === "home") return { label: match.home.split(" ")[0], color: C.accent };
+    if (pick === "away") return { label: match.away.split(" ")[0], color: C.gold };
+    return { label: "Draw", color: C.muted };
+  };
+
+  const pickResult = (pick, match) => {
+    if (!match.result || !pick) return null;
+    return pick === match.result ? "correct" : "wrong";
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 20, fontFamily: "'Bebas Neue', sans-serif", letterSpacing: 2, color: C.accent }}>COMPARE PICKS</div>
+        <div style={{ fontSize: 13, color: C.textDim, marginTop: 4 }}>Select players to compare your picks side by side.</div>
+      </div>
+
+      {/* Player selector */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 12, color: C.muted, fontWeight: 600, marginBottom: 8, letterSpacing: 1 }}>SELECT PLAYERS TO COMPARE:</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {otherPlayers.map(p => (
+            <button key={p} onClick={() => togglePlayer(p)} style={{
+              padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: "pointer",
+              background: selected.includes(p) ? `${C.accent}22` : "transparent",
+              border: `1.5px solid ${selected.includes(p) ? C.accent : C.border}`,
+              color: selected.includes(p) ? C.accent : C.muted,
+              fontFamily: "Inter, sans-serif",
+            }}>{p}</button>
+          ))}
+        </div>
+      </div>
+
+      {comparePlayers.length < 2 ? (
+        <div style={{ color: C.muted, fontSize: 14, textAlign: "center", padding: 30 }}>Select at least one other player to compare.</div>
+      ) : (
+        <>
+          {/* Section toggle */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            {["groups", "knockout"].map(s => (
+              <button key={s} onClick={() => setSection(s)} style={{
+                padding: "6px 18px", borderRadius: 20, fontSize: 13, fontWeight: 700, cursor: "pointer",
+                background: section === s ? C.accent : "transparent",
+                color: section === s ? "#000" : C.muted,
+                border: `1px solid ${section === s ? C.accent : C.border}`,
+                fontFamily: "Inter, sans-serif",
+              }}>{s === "groups" ? "Group Stage" : "Knockout"}</button>
+            ))}
+          </div>
+
+          {section === "groups" && (
+            <div style={{ overflowX: "auto" }}>
+              {Object.entries(byDate).map(([date, matches]) => (
+                <div key={date} style={{ marginBottom: 24 }}>
+                  <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, color: C.gold, letterSpacing: 2, marginBottom: 8 }}>{date}</div>
+                  {/* Header row */}
+                  <div style={{ display: "flex", gap: 4, marginBottom: 4, minWidth: 400 }}>
+                    <div style={{ width: 160, flexShrink: 0, fontSize: 11, color: C.muted, fontWeight: 600 }}>MATCH</div>
+                    {comparePlayers.map(p => (
+                      <div key={p} style={{ flex: 1, minWidth: 70, fontSize: 11, color: p === currentPlayer ? C.accent : C.textDim, fontWeight: 700, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {p === currentPlayer ? "YOU" : p.split(" ")[0].toUpperCase()}
+                      </div>
+                    ))}
+                  </div>
+                  {matches.map(m => (
+                    <div key={m.id} style={{ display: "flex", gap: 4, marginBottom: 4, minWidth: 400, alignItems: "center" }}>
+                      <div style={{ width: 160, flexShrink: 0, fontSize: 12, color: C.textDim }}>
+                        {f(m.home)} {m.home.split(" ")[0]} vs {f(m.away)} {m.away.split(" ")[0]}
+                        {m.result && <span style={{ fontSize: 10, color: C.green, marginLeft: 4 }}>✓</span>}
+                      </div>
+                      {comparePlayers.map(p => {
+                        const pick = allPicks[p]?.[m.id];
+                        const { label, color } = pickLabel(pick, m);
+                        const res = pickResult(pick, m);
+                        return (
+                          <div key={p} style={{
+                            flex: 1, minWidth: 70, textAlign: "center", padding: "4px 4px",
+                            background: res === "correct" ? `${C.green}20` : res === "wrong" ? `${C.red}15` : C.card,
+                            borderRadius: 6, border: `1px solid ${res === "correct" ? C.green + "44" : res === "wrong" ? C.red + "33" : C.border}`,
+                            fontSize: 11, fontWeight: 700, color: res ? (res === "correct" ? C.green : C.red) : color,
+                          }}>
+                            {label} {res === "correct" ? "✅" : res === "wrong" ? "❌" : ""}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {section === "knockout" && !knockoutLocked && (
+            <div style={{ textAlign: "center", padding: 40, color: C.muted, fontSize: 14 }}>Knockout picks aren't locked yet.</div>
+          )}
+
+          {section === "knockout" && knockoutLocked && (
+            <div style={{ overflowX: "auto" }}>
+              {KNOCKOUT_ROUNDS.map(({ round, label }) => {
+                const rMatches = knockoutMatches.filter(m => m.round === round && m.home && m.away);
+                if (rMatches.length === 0) return null;
+                return (
+                  <div key={round} style={{ marginBottom: 24 }}>
+                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, color: C.gold, letterSpacing: 2, marginBottom: 8 }}>{label}</div>
+                    <div style={{ display: "flex", gap: 4, marginBottom: 4, minWidth: 400 }}>
+                      <div style={{ width: 160, flexShrink: 0, fontSize: 11, color: C.muted, fontWeight: 600 }}>MATCH</div>
+                      {comparePlayers.map(p => (
+                        <div key={p} style={{ flex: 1, minWidth: 70, fontSize: 11, color: p === currentPlayer ? C.accent : C.textDim, fontWeight: 700, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {p === currentPlayer ? "YOU" : p.split(" ")[0].toUpperCase()}
+                        </div>
+                      ))}
+                    </div>
+                    {rMatches.map(m => (
+                      <div key={m.id} style={{ display: "flex", gap: 4, marginBottom: 4, minWidth: 400, alignItems: "center" }}>
+                        <div style={{ width: 160, flexShrink: 0, fontSize: 12, color: C.textDim }}>
+                          {f(m.home)} {m.home.split(" ")[0]} vs {f(m.away)} {m.away.split(" ")[0]}
+                          {m.result && <span style={{ fontSize: 10, color: C.green, marginLeft: 4 }}>✓</span>}
+                        </div>
+                        {comparePlayers.map(p => {
+                          const pick = allPicks[p]?.[m.id];
+                          const pickedTeam = pick ? getPickedWinner(m.id, allPicks[p] || {}, knockoutMatches) : null;
+                          const actualWinner = getActualWinner(m.id, knockoutMatches);
+                          const res = actualWinner && pickedTeam ? (pickedTeam === actualWinner ? "correct" : "wrong") : null;
+                          const label = pickedTeam ? (pickedTeam.split(" ")[0]) : "—";
+                          return (
+                            <div key={p} style={{
+                              flex: 1, minWidth: 70, textAlign: "center", padding: "4px 4px",
+                              background: res === "correct" ? `${C.green}20` : res === "wrong" ? `${C.red}15` : C.card,
+                              borderRadius: 6, border: `1px solid ${res === "correct" ? C.green + "44" : res === "wrong" ? C.red + "33" : C.border}`,
+                              fontSize: 11, fontWeight: 700, color: res ? (res === "correct" ? C.green : C.red) : C.textDim,
+                            }}>
+                              {label} {res === "correct" ? "✅" : res === "wrong" ? "❌" : ""}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // Max points still available to a player
 function maxPossibleScore(playerPicks, allMatches) {
   const knockoutMatches = allMatches.filter(m => m.stage === "knockout");
@@ -1425,12 +1609,20 @@ function getMostPopularWrongPick(allMatches, allPicks, allPlayers) {
 }
 
 // Leaderboard
-function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastUpdated, isCommissioner }) {
+function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastUpdated, isCommissioner, groupPicksLocked, paid }) {
   const [expandedPlayer, setExpandedPlayer] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState(null);
   const knockoutMatches = allMatches.filter(m => m.stage === "knockout");
   const anyResults = allMatches.some(m => m.result);
+
+  // Payout calc
+  const paidCount = paid ? allPlayers.filter(p => paid[p]).length : 0;
+  const totalPot = paidCount * 20;
+  const roundTo5 = v => Math.round(v / 5) * 5;
+  const payout1 = roundTo5(totalPot * 0.65);
+  const payout2 = roundTo5(totalPot * 0.25);
+  const payout3 = totalPot - payout1 - payout2;
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -1440,6 +1632,9 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastU
       const data = await res.json();
       if (data.success) {
         setRefreshMsg(data.total > 0 ? `✓ Updated ${data.total} result${data.total !== 1 ? "s" : ""}` : "✓ Already up to date");
+      } else if (data.message) {
+        // Function ran fine but no data to update yet
+        setRefreshMsg("✓ No new results yet");
       } else {
         setRefreshMsg(`✗ ${data.error || "Sync failed"}`);
       }
@@ -1480,6 +1675,27 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastU
           )}
         </div>
       </div>
+
+      {/* Pot + payouts banner — visible after group stage locks */}
+      {groupPicksLocked && totalPot > 0 && (
+        <div style={{ background: `${C.gold}15`, border: `1px solid ${C.gold}44`, borderRadius: 12, padding: "14px 20px", marginBottom: 20, display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: 1 }}>TOTAL POT</div>
+            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 28, color: C.gold }}>${totalPot}</div>
+          </div>
+          <div style={{ width: 1, height: 36, background: C.border, flexShrink: 0 }} />
+          {[
+            { icon: "🥇", label: "1st", amount: payout1 },
+            { icon: "🥈", label: "2nd", amount: payout2 },
+            { icon: "🥉", label: "3rd", amount: payout3 },
+          ].map(row => (
+            <div key={row.label} style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 13 }}>{row.icon} {row.label}</div>
+              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, color: C.gold }}>${row.amount}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Most popular wrong pick */}
       {wrongPick && wrongPick.count > 0 && (
@@ -1596,7 +1812,7 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
           />
         )}
         {activeTab === "leaderboard" && (
-          <LeaderboardTab allPlayers={players} allPicks={picks} allMatches={allMatches} currentPlayer="" isCommissioner={true} lastUpdated={lastUpdated ? (() => { const d = new Date(lastUpdated); const now = new Date(); const diffMins = Math.floor((now - d) / 60000); if (diffMins < 1) return "just now"; if (diffMins < 60) return `${diffMins}m ago`; const diffHrs = Math.floor(diffMins / 60); return diffHrs < 24 ? `${diffHrs}h ago` : d.toLocaleDateString(); })() : null} />
+          <LeaderboardTab allPlayers={players} allPicks={picks} allMatches={allMatches} currentPlayer="" isCommissioner={true} groupPicksLocked={groupPicksLocked} paid={paid} lastUpdated={lastUpdated ? (() => { const d = new Date(lastUpdated); const now = new Date(); const diffMins = Math.floor((now - d) / 60000); if (diffMins < 1) return "just now"; if (diffMins < 60) return `${diffMins}m ago`; const diffHrs = Math.floor(diffMins / 60); return diffHrs < 24 ? `${diffHrs}h ago` : d.toLocaleDateString(); })() : null} />
         )}
         {activeTab === "players" && (
           <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} paid={paid} onTogglePaid={onTogglePaid} onResetPin={onResetPin} onRenamePlayer={onRenamePlayer} onRemovePlayer={onRemovePlayer} />
@@ -1671,15 +1887,6 @@ function CommMatchResultRow({ match, onSetResult, allowDraw }) {
 }
 
 function CommKnockout({ knockoutMatches, knockoutOpen, knockoutLocked, onSetTeams, onSetResult, onOpen, onLock }) {
-  const [editId, setEditId] = useState(null);
-  const [homeVal, setHomeVal] = useState("");
-  const [awayVal, setAwayVal] = useState("");
-
-  const save = (id) => {
-    onSetTeams(id, homeVal, awayVal);
-    setEditId(null);
-  };
-
   return (
     <div>
       <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, color: C.accent, letterSpacing: 2, marginBottom: 8 }}>KNOCKOUT STAGE</div>
@@ -1694,57 +1901,72 @@ function CommKnockout({ knockoutMatches, knockoutOpen, knockoutLocked, onSetTeam
         {knockoutOpen && !knockoutLocked && (
           <div>
             <Btn onClick={onLock} variant="danger">Lock All Knockout Picks</Btn>
-            <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>Locks picks — do this before Round of 32 kicks off.</div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>Lock before Round of 32 kicks off.</div>
           </div>
         )}
         {knockoutLocked && <Badge color={C.red}>PICKS LOCKED</Badge>}
         {knockoutOpen && !knockoutLocked && <Badge color={C.green}>PICKS OPEN</Badge>}
       </div>
 
-      {KNOCKOUT_ROUNDS.map(({ round, label }) => {
-        const rMatches = knockoutMatches.filter(m => m.round === round);
-        return (
-          <div key={round} style={{ marginBottom: 28 }}>
-            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: C.gold, letterSpacing: 2, marginBottom: 10 }}>{label}</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {rMatches.map(m => (
-                <div key={m.id} style={{ background: C.card, borderRadius: 10, padding: "12px 16px", border: `1px solid ${C.border}` }}>
-                  {editId === m.id ? (
-                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <input value={homeVal} onChange={e => setHomeVal(e.target.value)} placeholder="Home team" style={{ padding: "6px 10px", background: C.surface, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 13, fontFamily: "Inter, sans-serif", width: 140 }} />
-                      <span style={{ color: C.muted }}>vs</span>
-                      <input value={awayVal} onChange={e => setAwayVal(e.target.value)} placeholder="Away team" style={{ padding: "6px 10px", background: C.surface, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 13, fontFamily: "Inter, sans-serif", width: 140 }} />
-                      <Btn small onClick={() => save(m.id)}>Save</Btn>
-                      <Btn small variant="ghost" onClick={() => setEditId(null)}>Cancel</Btn>
-                    </div>
-                  ) : (
-                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                      <span style={{ flex: 1, fontWeight: 600, fontSize: 13, color: m.home ? C.text : C.muted }}>
-                        {m.home ? `${f(m.home)} ${m.home}` : "TBD"} <span style={{ color: C.muted, fontWeight: 400 }}>vs</span> {m.away ? `${f(m.away)} ${m.away}` : "TBD"}
-                      </span>
-                      <Btn small variant="ghost" onClick={() => { setEditId(m.id); setHomeVal(m.home); setAwayVal(m.away); }}>Set Teams</Btn>
-                      {m.home && m.away && (
-                        <div style={{ display: "flex", gap: 6 }}>
-                          {[{ val: "home", label: m.home.split(" ")[0] }, { val: "away", label: m.away.split(" ")[0] }].map(o => (
-                            <button key={o.val} onClick={() => onSetResult(m.id, m.result === o.val ? null : o.val)} style={{
-                              padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
-                              border: `1.5px solid ${m.result === o.val ? C.green : C.border}`,
-                              background: m.result === o.val ? `${C.green}22` : "transparent",
-                              color: m.result === o.val ? C.green : C.muted,
-                              fontFamily: "Inter, sans-serif",
-                            }}>{o.label} wins</button>
-                          ))}
-                        </div>
-                      )}
-                      {m.result && <Badge color={C.green}>✓ Result Set</Badge>}
-                    </div>
-                  )}
-                </div>
-              ))}
+      {/* Set Teams panel — always visible for commissioner */}
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, color: C.gold, letterSpacing: 2, marginBottom: 10 }}>SET MATCHUPS</div>
+        {KNOCKOUT_ROUNDS.filter(r => r.round === "R32").map(({ round, label }) => (
+          <CommSetTeamsSection key={round} round={round} label={label} knockoutMatches={knockoutMatches} onSetTeams={onSetTeams} onSetResult={onSetResult} />
+        ))}
+      </div>
+
+      {/* Bracket view */}
+      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, color: C.gold, letterSpacing: 2, marginBottom: 10 }}>BRACKET VIEW</div>
+      <BracketView knockoutMatches={knockoutMatches} picks={{}} onPick={null} isCommissioner onSetTeams={onSetTeams} onSetResult={onSetResult} />
+    </div>
+  );
+}
+
+function CommSetTeamsSection({ round, label, knockoutMatches, onSetTeams, onSetResult }) {
+  const [editId, setEditId] = useState(null);
+  const [homeVal, setHomeVal] = useState("");
+  const [awayVal, setAwayVal] = useState("");
+  const rMatches = knockoutMatches.filter(m => m.round === round);
+  const save = (id) => { onSetTeams(id, homeVal, awayVal); setEditId(null); };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+      {rMatches.map(m => (
+        <div key={m.id} style={{ background: C.card, borderRadius: 10, padding: "10px 14px", border: `1px solid ${C.border}` }}>
+          {editId === m.id ? (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <input value={homeVal} onChange={e => setHomeVal(e.target.value)} placeholder="Home team"
+                style={{ padding: "6px 10px", background: C.surface, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 13, fontFamily: "Inter, sans-serif", width: 140 }} />
+              <span style={{ color: C.muted }}>vs</span>
+              <input value={awayVal} onChange={e => setAwayVal(e.target.value)} placeholder="Away team"
+                style={{ padding: "6px 10px", background: C.surface, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 13, fontFamily: "Inter, sans-serif", width: 140 }} />
+              <Btn small onClick={() => save(m.id)}>Save</Btn>
+              <Btn small variant="ghost" onClick={() => setEditId(null)}>Cancel</Btn>
             </div>
-          </div>
-        );
-      })}
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: m.home ? C.text : C.muted }}>
+                {m.home ? `${f(m.home)} ${m.home}` : "TBD"} <span style={{ color: C.muted, fontWeight: 400 }}>vs</span> {m.away ? `${f(m.away)} ${m.away}` : "TBD"}
+              </span>
+              <Btn small variant="ghost" onClick={() => { setEditId(m.id); setHomeVal(m.home || ""); setAwayVal(m.away || ""); }}>Set Teams</Btn>
+              {m.home && m.away && (
+                <div style={{ display: "flex", gap: 6 }}>
+                  {[{ val: "home", label: m.home.split(" ")[0] }, { val: "away", label: m.away.split(" ")[0] }].map(o => (
+                    <button key={o.val} onClick={() => onSetResult(m.id, m.result === o.val ? null : o.val)} style={{
+                      padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                      border: `1.5px solid ${m.result === o.val ? C.green : C.border}`,
+                      background: m.result === o.val ? `${C.green}22` : "transparent",
+                      color: m.result === o.val ? C.green : C.muted, fontFamily: "Inter, sans-serif",
+                    }}>{o.label} wins</button>
+                  ))}
+                </div>
+              )}
+              {m.result && <Badge color={C.green}>✓ Set</Badge>}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
