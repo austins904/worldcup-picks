@@ -59,6 +59,13 @@ async function sbSet(key, value) {
 
 // ── Main handler ───────────────────────────────────────────────────────────
 export default async function handler(req, res) {
+  // CORS headers so the app can call this from the browser
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") return res.status(200).end();
+
   // Allow manual GET trigger too (useful for testing)
   if (req.method !== "GET" && req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
