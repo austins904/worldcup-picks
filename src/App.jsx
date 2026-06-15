@@ -182,12 +182,22 @@ const SUPABASE_URL = "https://aqqwxklktxhcbidnmhwu.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFxcXd4a2xrdHhoY2JpZG5taHd1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA4NjUwMzUsImV4cCI6MjA5NjQ0MTAzNX0.y445KL8nMCObU4n_ExeMNNZgz484SqsXOeloaRAv3Y4";
 const SB_HEADERS = { "Content-Type": "application/json", "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` };
 
-async function loadState(key) {
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/wc_state?key=eq.${encodeURIComponent(key)}&select=value`, { headers: SB_HEADERS });
-    const rows = await res.json();
-    return rows?.[0]?.value ?? null;
-  } catch { return null; }
+async function loadState(key, attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/wc_state?key=eq.${encodeURIComponent(key)}&select=value`, { headers: SB_HEADERS });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const rows = await res.json();
+      return rows?.[0]?.value ?? null;
+    } catch (e) {
+      if (i === attempts - 1) {
+        console.error(`loadState failed for ${key} after ${attempts} attempts:`, e);
+        return null;
+      }
+      await new Promise(r => setTimeout(r, 400 * (i + 1)));
+    }
+  }
+  return null;
 }
 
 // Save with retry — tries up to 3 times with exponential backoff
@@ -368,9 +378,6 @@ export default function App() {
       ]);
       const playerList = p || [];
       if (playerList.length) setPlayersState(playerList);
-      // Write group/knockout matches to Supabase if not there yet (needed for cron job)
-      if (!gm) saveState("wc_group_matches", generateGroupMatches());
-      if (!km) saveState("wc_knockout_matches", generateKnockoutMatches());
       if (gm) setGroupMatchesState(gm);
       if (km) setKnockoutMatchesState(km);
       if (ko !== null) setKnockoutOpenState(ko);
