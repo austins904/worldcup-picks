@@ -360,12 +360,13 @@ export default function App() {
   const [knockoutOpen, setKnockoutOpenState] = useState(false);
   const [knockoutLocked, setKnockoutLockedState] = useState(false);
   const [lastUpdated, setLastUpdatedState] = useState(null);
+  const [announcement, setAnnouncementState] = useState("");
   const [activeTab, setActiveTab] = useState("groups");
 
   // Load from storage
   useEffect(() => {
     (async () => {
-      const [p, gm, km, ko, kl, pn, gl, pd, lu] = await Promise.all([
+      const [p, gm, km, ko, kl, pn, gl, pd, lu, an] = await Promise.all([
         loadState("wc_players"),
         loadState("wc_group_matches"),
         loadState("wc_knockout_matches"),
@@ -375,6 +376,7 @@ export default function App() {
         loadState("wc_group_locked"),
         loadState("wc_paid"),
         loadState("wc_last_updated"),
+        loadState("wc_announcement"),
       ]);
       const playerList = p || [];
       if (playerList.length) setPlayersState(playerList);
@@ -386,6 +388,7 @@ export default function App() {
       if (gl !== null) setGroupLockedState(gl);
       if (pd) setPaidState(pd);
       if (lu) setLastUpdatedState(lu);
+      if (an) setAnnouncementState(an);
       // Load picks — check both old combined key and new per-player keys
       if (playerList.length) {
         // Load per-player keys
@@ -449,6 +452,7 @@ export default function App() {
   const setKnockoutLocked = (v) => { setKnockoutLockedState(v); saveState("wc_knockout_locked", v); };
   const setPins = (v) => { setPinsState(v); saveState("wc_pins", v); };
   const setPaid = (v) => { setPaidState(v); saveState("wc_paid", v); };
+  const setAnnouncement = (v) => { setAnnouncementState(v); saveState("wc_announcement", v); };
 
   const groupPicksLocked = groupLocked || isAutoLocked();
   const allMatches = [...groupMatches, ...knockoutMatches];
@@ -531,6 +535,8 @@ export default function App() {
         const newPaid = { ...paid }; delete newPaid[name]; setPaid(newPaid);
       }}
       lastUpdated={lastUpdated}
+      announcement={announcement}
+      onSetAnnouncement={setAnnouncement}
       onMatchesReloaded={(gm, km, lu) => {
         if (gm) setGroupMatchesState(gm);
         if (km) setKnockoutMatchesState(km);
@@ -552,6 +558,7 @@ export default function App() {
       knockoutLocked={knockoutLocked}
       groupPicksLocked={groupPicksLocked}
       lastUpdated={lastUpdated}
+      announcement={announcement}
       isPaid={!!paid[currentUser.name]}
       paid={paid}
       onPick={(matchId, result) => {
@@ -773,7 +780,7 @@ function LoginScreen({ players, pins, onLogin, onSetPin, onAddPlayer }) {
 }
 
 // ── PLAYER VIEW ────────────────────────────────────────────────────────────
-function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, allPicks, allMatches, knockoutOpen, knockoutLocked, groupPicksLocked, lastUpdated, isPaid, paid, onPick, onRenamePlayer, onLogout, activeTab, setActiveTab, onMatchesReloaded }) {
+function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, allPicks, allMatches, knockoutOpen, knockoutLocked, groupPicksLocked, lastUpdated, announcement, isPaid, paid, onPick, onRenamePlayer, onLogout, activeTab, setActiveTab, onMatchesReloaded }) {
   const myScore = scorePlayer(picks, allMatches);
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(player);
@@ -880,6 +887,16 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
           ))}
         </div>
       </div>
+
+      {/* Commissioner announcement banner */}
+      {announcement && announcement.trim() && (
+        <div style={{ background: `${C.gold}25`, borderBottom: `1px solid ${C.gold}55`, padding: "10px 20px" }}>
+          <div style={{ maxWidth: 800, margin: "0 auto", display: "flex", alignItems: "flex-start", gap: 8 }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>📢</span>
+            <span style={{ fontSize: 13, color: C.gold, fontWeight: 600, lineHeight: 1.4 }}>{announcement}</span>
+          </div>
+        </div>
+      )}
 
       <div style={{ maxWidth: 800, margin: "0 auto", padding: "24px 16px" }}>
         {/* Pick completion warning */}
@@ -1787,13 +1804,14 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastU
 }
 
 // ── COMMISSIONER VIEW ──────────────────────────────────────────────────────
-function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, groupLocked, groupPicksLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLockGroupPicks, onRenamePlayer, onRemovePlayer, onLogout, activeTab, setActiveTab, addPlayer, pins, paid, onTogglePaid, onResetPin, lastUpdated, onMatchesReloaded }) {
+function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, groupLocked, groupPicksLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLockGroupPicks, onRenamePlayer, onRemovePlayer, onLogout, activeTab, setActiveTab, addPlayer, pins, paid, onTogglePaid, onResetPin, lastUpdated, announcement, onSetAnnouncement, onMatchesReloaded }) {
 
   const tabs = [
     { id: "groups", label: "Group Results" },
     { id: "knockout", label: "Knockout" },
     { id: "leaderboard", label: "Leaderboard" },
     { id: "players", label: "Players" },
+    { id: "announcement", label: "Announcement" },
   ];
 
   return (
@@ -1821,6 +1839,16 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
         </div>
       </div>
 
+      {/* Commissioner announcement banner — visible to commissioner too for confirmation */}
+      {announcement && announcement.trim() && (
+        <div style={{ background: `${C.gold}25`, borderBottom: `1px solid ${C.gold}55`, padding: "10px 20px" }}>
+          <div style={{ maxWidth: 900, margin: "0 auto", display: "flex", alignItems: "flex-start", gap: 8 }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>📢</span>
+            <span style={{ fontSize: 13, color: C.gold, fontWeight: 600, lineHeight: 1.4 }}>{announcement}</span>
+          </div>
+        </div>
+      )}
+
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
         {activeTab === "groups" && (
           <CommGroupResults groupMatches={groupMatches} onSetResult={onSetGroupResult} groupLocked={groupLocked} groupPicksLocked={groupPicksLocked} onLockGroupPicks={onLockGroupPicks} />
@@ -1841,6 +1869,9 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
         )}
         {activeTab === "players" && (
           <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} paid={paid} onTogglePaid={onTogglePaid} onResetPin={onResetPin} onRenamePlayer={onRenamePlayer} onRemovePlayer={onRemovePlayer} />
+        )}
+        {activeTab === "announcement" && (
+          <CommAnnouncement announcement={announcement} onSetAnnouncement={onSetAnnouncement} />
         )}
       </div>
     </div>
@@ -1996,6 +2027,63 @@ function CommSetTeamsSection({ round, label, knockoutMatches, onSetTeams, onSetR
   );
 }
 
+// ── COMMISSIONER ANNOUNCEMENT ──────────────────────────────────────────────
+function CommAnnouncement({ announcement, onSetAnnouncement }) {
+  const [text, setText] = useState(announcement || "");
+  const [saved, setSaved] = useState(false);
+
+  const handleSave = () => {
+    onSetAnnouncement(text.trim());
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const handleClear = () => {
+    setText("");
+    onSetAnnouncement("");
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div>
+      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, color: C.accent, letterSpacing: 2, marginBottom: 8 }}>ANNOUNCEMENT BANNER</div>
+      <div style={{ fontSize: 13, color: C.textDim, marginBottom: 16 }}>
+        Type a message and it'll show as a gold banner at the top of every player's screen, on every tab, until you change or clear it.
+      </div>
+
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        placeholder="e.g. Knockout matchups are set — go make your picks before Saturday's kickoff!"
+        rows={3}
+        style={{
+          width: "100%", padding: "12px 14px", background: C.card, color: C.text,
+          border: `1px solid ${C.border}`, borderRadius: 10, fontSize: 14,
+          fontFamily: "Inter, sans-serif", resize: "vertical", boxSizing: "border-box",
+        }}
+      />
+
+      <div style={{ display: "flex", gap: 10, marginTop: 12, alignItems: "center" }}>
+        <Btn onClick={handleSave}>Save & Show Banner</Btn>
+        <Btn variant="danger" onClick={handleClear}>Clear Banner</Btn>
+        {saved && <span style={{ fontSize: 12, color: C.green, fontWeight: 600 }}>✓ Saved</span>}
+      </div>
+
+      {/* Live preview */}
+      {text.trim() && (
+        <div style={{ marginTop: 24 }}>
+          <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, letterSpacing: 1, marginBottom: 8 }}>PREVIEW</div>
+          <div style={{ background: `${C.gold}25`, border: `1px solid ${C.gold}55`, borderRadius: 8, padding: "10px 16px", display: "flex", alignItems: "flex-start", gap: 8 }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>📢</span>
+            <span style={{ fontSize: 13, color: C.gold, fontWeight: 600, lineHeight: 1.4 }}>{text}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onResetPin, onRenamePlayer, onRemovePlayer }) {
   const [newName, setNewName] = useState("");
   const [editingName, setEditingName] = useState(null);
@@ -2143,4 +2231,3 @@ function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onRe
     </div>
   );
 }
-
