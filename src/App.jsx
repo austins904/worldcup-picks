@@ -5,7 +5,7 @@ function generateGroupMatches() {
   const schedule = [
     // June 11
     { group:"A", home:"Mexico",       away:"South Africa",  date:"Jun 11", time:"3:00 PM ET" },
-    { group:"A", home:"South Korea",  away:"Czechia",       date:"Jun 11", time:"10:00 PM ET" },
+    { group:"A", home:"South Korea",  away:"Czechia",       date:"Jun S11", time:"10:00 PM ET" },
     // June 12
     { group:"B", home:"Canada",       away:"Bosnia-Herzegovina", date:"Jun 12", time:"3:00 PM ET" },
     { group:"D", home:"USA",          away:"Paraguay",      date:"Jun 12", time:"9:00 PM ET" },
@@ -2231,3 +2231,4 @@ function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onRe
     </div>
   );
 }
+
