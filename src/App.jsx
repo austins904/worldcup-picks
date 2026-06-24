@@ -5,7 +5,7 @@ function generateGroupMatches() {
   const schedule = [
     // June 11
     { group:"A", home:"Mexico",       away:"South Africa",  date:"Jun 11", time:"3:00 PM ET" },
-    { group:"A", home:"South Korea",  away:"Czechia",       date:"Jun S11", time:"10:00 PM ET" },
+    { group:"A", home:"South Korea",  away:"Czechia",       date:"Jun 11", time:"10:00 PM ET" },
     // June 12
     { group:"B", home:"Canada",       away:"Bosnia-Herzegovina", date:"Jun 12", time:"3:00 PM ET" },
     { group:"D", home:"USA",          away:"Paraguay",      date:"Jun 12", time:"9:00 PM ET" },
@@ -1862,6 +1862,10 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
             onSetResult={onSetKnockoutResult}
             onOpen={onOpenKnockout}
             onLock={onLockKnockout}
+            onMatchesFilled={async () => {
+              const km = await loadState("wc_knockout_matches");
+              if (km) onMatchesReloaded(null, km, null);
+            }}
           />
         )}
         {activeTab === "leaderboard" && (
@@ -1942,12 +1946,34 @@ function CommMatchResultRow({ match, onSetResult, allowDraw }) {
   );
 }
 
-function CommKnockout({ knockoutMatches, knockoutOpen, knockoutLocked, onSetTeams, onSetResult, onOpen, onLock }) {
+function CommKnockout({ knockoutMatches, knockoutOpen, knockoutLocked, onSetTeams, onSetResult, onOpen, onLock, onMatchesFilled }) {
+  const [filling, setFilling] = useState(false);
+  const [fillMsg, setFillMsg] = useState(null);
+
+  const handleAutoFill = async () => {
+    setFilling(true);
+    setFillMsg(null);
+    try {
+      const res = await fetch("/api/fill-r32");
+      const data = await res.json();
+      if (data.success) {
+        setFillMsg(`✓ Filled ${data.filled} R32 matchup${data.filled !== 1 ? "s" : ""}`);
+        if (onMatchesFilled) onMatchesFilled();
+      } else {
+        setFillMsg(`✗ ${data.error || "Could not fill matchups"}`);
+      }
+    } catch (e) {
+      setFillMsg("✗ Could not reach server");
+    }
+    setFilling(false);
+    setTimeout(() => setFillMsg(null), 6000);
+  };
+
   return (
     <div>
       <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, color: C.accent, letterSpacing: 2, marginBottom: 8 }}>KNOCKOUT STAGE</div>
 
-      <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
         {!knockoutOpen && (
           <div>
             <Btn onClick={onOpen} variant="gold">Open Knockout Picks</Btn>
@@ -1962,6 +1988,17 @@ function CommKnockout({ knockoutMatches, knockoutOpen, knockoutLocked, onSetTeam
         )}
         {knockoutLocked && <Badge color={C.red}>PICKS LOCKED</Badge>}
         {knockoutOpen && !knockoutLocked && <Badge color={C.green}>PICKS OPEN</Badge>}
+
+        {/* Auto-fill button */}
+        <div>
+          <Btn onClick={handleAutoFill} disabled={filling} variant="ghost">
+            {filling ? "⟳ Fetching…" : "⟳ Auto-Fill R32 Matchups"}
+          </Btn>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>Pulls matchups from FIFA API once group stage ends.</div>
+          {fillMsg && (
+            <div style={{ fontSize: 12, fontWeight: 600, color: fillMsg.startsWith("✓") ? C.green : C.red, marginTop: 4 }}>{fillMsg}</div>
+          )}
+        </div>
       </div>
 
       {/* Set Teams panel — always visible for commissioner */}
