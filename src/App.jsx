@@ -814,15 +814,17 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
     setNameErr("");
   };
 
-  // Compute rank
+  // Compute rank with tie detection
   const myRank = (() => {
     const scores = allPlayers.map(p => scorePlayer(allPicks[p] || {}, allMatches)).sort((a, b) => b - a);
     const rank = scores.indexOf(myScore) + 1;
-    if (rank === 1) return "🥇 1st";
-    if (rank === 2) return "🥈 2nd";
-    if (rank === 3) return "🥉 3rd";
-    const suffix = rank === 4 ? "th" : rank === 5 ? "th" : rank % 10 === 1 ? "st" : rank % 10 === 2 ? "nd" : rank % 10 === 3 ? "rd" : "th";
-    return `${rank}${suffix}`;
+    const isTied = scores.filter(s => s === myScore).length > 1;
+    const prefix = isTied ? "T-" : "";
+    if (rank === 1) return `${prefix}🥇 ${isTied ? "1st" : "1st"}`;
+    if (rank === 2) return `${prefix}🥈 ${isTied ? "2nd" : "2nd"}`;
+    if (rank === 3) return `${prefix}🥉 ${isTied ? "3rd" : "3rd"}`;
+    const suffix = rank % 10 === 1 && rank !== 11 ? "st" : rank % 10 === 2 && rank !== 12 ? "nd" : rank % 10 === 3 && rank !== 13 ? "rd" : "th";
+    return `${prefix}${rank}${suffix}`;
   })();
 
   const tabs = [
@@ -1696,7 +1698,16 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastU
     }))
     .sort((a, b) => b.pts - a.pts);
 
-  const medals = ["🥇", "🥈", "🥉"];
+  // Calculate tied ranks
+  const getRank = (idx) => {
+    const pts = scored[idx].pts;
+    const rank = scored.findIndex(p => p.pts === pts) + 1;
+    const isTied = scored.filter(p => p.pts === pts).length > 1;
+    const suffix = rank === 1 ? "st" : rank === 2 ? "nd" : rank === 3 ? "rd" : "th";
+    return { rank, isTied, label: `${isTied ? "T-" : ""}${rank}${isTied ? "" : suffix}` };
+  };
+
+  const medalFor = (rank) => rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : null;
   const wrongPick = anyResults ? getMostPopularWrongPick(allMatches, allPicks, allPlayers) : null;
 
   return (
@@ -1751,7 +1762,10 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastU
       )}
 
       {scored.length === 0 && <div style={{ color: C.muted, fontSize: 14 }}>No players yet.</div>}
-      {scored.map((p, i) => (
+      {scored.map((p, i) => {
+        const { rank, isTied, label } = getRank(i);
+        const medal = medalFor(rank);
+        return (
         <div key={p.name} style={{ marginBottom: 8 }}>
           <div
             onClick={() => setExpandedPlayer(expandedPlayer === p.name ? null : p.name)}
@@ -1764,7 +1778,12 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastU
               cursor: "pointer",
             }}
           >
-            <span style={{ fontSize: 20, width: 28, textAlign: "center" }}>{medals[i] || `${i + 1}`}</span>
+            <span style={{ fontSize: medal ? 20 : 14, width: 36, textAlign: "center", fontWeight: 700, color: rank <= 3 ? C.gold : C.muted, flexShrink: 0 }}>
+              {medal || label}
+            </span>
+            {isTied && medal && (
+              <span style={{ fontSize: 10, color: C.gold, fontWeight: 700, marginLeft: -12 }}>T</span>
+            )}
             <span style={{ flex: 1, fontWeight: 600, fontSize: 15, color: p.name === currentPlayer ? C.accent : C.text }}>
               {p.name}{p.name === currentPlayer ? " (you)" : ""}
             </span>
@@ -1798,7 +1817,8 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastU
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -2268,4 +2288,3 @@ function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onRe
     </div>
   );
 }
-
