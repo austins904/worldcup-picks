@@ -14,6 +14,7 @@ const SB_HEADERS = {
   "Prefer": "resolution=merge-duplicates",
 };
 
+// ── Team name normalisation ────────────────────────────────────────────────
 const TEAM_MAP = {
   "United States": "USA", "USA": "USA",
   "Korea Republic": "South Korea", "South Korea": "South Korea",
@@ -35,6 +36,7 @@ const TEAM_MAP = {
 };
 const norm = (name) => TEAM_MAP[name] || name;
 
+// ── Knockout round mapping ─────────────────────────────────────────────────
 const ROUND_MAP = {
   "ROUND_OF_32": "R32", "LAST_32": "R32",
   "ROUND_OF_16": "R16", "LAST_16": "R16",
@@ -43,6 +45,7 @@ const ROUND_MAP = {
   "FINAL": "F",
 };
 
+// ── Supabase helpers ───────────────────────────────────────────────────────
 async function sbGet(key) {
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/wc_state?key=eq.${key}&select=value`,
@@ -60,18 +63,22 @@ async function sbSet(key, value) {
   });
 }
 
+// ── Main handler ───────────────────────────────────────────────────────────
 export default async function handler(req, res) {
+  // CORS headers so the app can call this from the browser
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") return res.status(200).end();
 
+  // Allow manual GET trigger too (useful for testing)
   if (req.method !== "GET" && req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
+    // 1. Fetch all WC 2026 matches from football-data.org
     const fdRes = await fetch(
       "https://api.football-data.org/v4/competitions/WC/matches?season=2026",
       { headers: { "X-Auth-Token": FD_API_KEY } }
@@ -82,6 +89,7 @@ export default async function handler(req, res) {
     }
     const { matches: apiMatches = [] } = await fdRes.json();
 
+    // 2. Load current state from Supabase
     const [groupMatches, knockoutMatches] = await Promise.all([
       sbGet("wc_group_matches"),
       sbGet("wc_knockout_matches"),
@@ -91,11 +99,14 @@ export default async function handler(req, res) {
       return res.status(200).json({ message: "No match data in Supabase yet — skipping." });
     }
 
-    let groupUpdated = 0, knockoutTeamsUpdated = 0, knockoutResultsUpdated = 0;
+    let groupUpdated = 0;
+    let knockoutResultsUpdated = 0;
 
+    // ── 3. Update group stage results ──────────────────────────────────────
     const updatedGroupMatches = groupMatches.map((m) => {
       const apiMatch = apiMatches.find((a) => {
         if (a.stage !== "GROUP_STAGE") return false;
+        // Try short name first, then full name
         const h = norm(a.homeTeam?.shortName || a.homeTeam?.name || "");
         const aw = norm(a.awayTeam?.shortName || a.awayTeam?.name || "");
         const hFull = norm(a.homeTeam?.name || "");
@@ -124,45 +135,60 @@ export default async function handler(req, res) {
       return m;
     });
 
+    // ── 4. Update knockout results only (never auto-set teams) ─────────────
+    // Only update results for matches where commissioner has already set teams
     const koById = {};
     knockoutMatches.forEach((m) => { koById[m.id] = { ...m }; });
 
-    apiMatches.filter((a) => ROUND_MAP[a.stage]).forEach((a) => {
-      const round = ROUND_MAP[a.stage];
-      const home = norm(a.homeTeam?.shortName || a.homeTeam?.name || "");
-      const away = norm(a.awayTeam?.shortName || a.awayTeam?.name || "");
-      if (!home || !away || home === "TBD" || away === "TBD") return;
+    apiMatches
+      .filter((a) => ROUND_MAP[a.stage])
+      .forEach((a) => {
+        if (a.status !== "FINISHED") return;
+        const round = ROUND_MAP[a.stage];
+        const home = norm(a.homeTeam?.shortName || a.homeTeam?.name || "");
+        const away = norm(a.awayTeam?.shortName || a.awayTeam?.name || "");
+        if (!home || !away || home === "TBD" || away === "TBD") return;
 
-      let slot = Object.values(koById).find(
-        (s) => s.round === round && ((s.home === home && s.away === away) || (s.home === away && s.away === home))
-      );
-      if (!slot) slot = Object.values(koById).find((s) => s.round === round && !s.home && !s.away);
-      if (!slot) return;
+        // Only match against slots that already have teams set by commissioner
+        const slot = Object.values(koById).find(
+          (s) => s.round === round && s.home && s.away &&
+            ((s.home === home && s.away === away) ||
+             (s.home === away && s.away === home))
+        );
+        if (!slot) return;
 
-      if (!slot.home || !slot.away) { slot.home = home; slot.away = away; knockoutTeamsUpdated++; }
-
-      if (a.status === "FINISHED") {
+        // Set result
         const hg = a.score?.fullTime?.home;
         const ag = a.score?.fullTime?.away;
         const penH = a.score?.penalties?.home;
         const penA = a.score?.penalties?.away;
         let winner;
-        if (penH != null && penA != null) { winner = penH > penA ? slot.home : slot.away; }
-        else if (hg != null && ag != null && hg !== ag) { winner = hg > ag ? slot.home : slot.away; }
+        if (penH != null && penA != null) {
+          winner = penH > penA ? slot.home : slot.away;
+        } else if (hg != null && ag != null && hg !== ag) {
+          winner = hg > ag ? slot.home : slot.away;
+        }
         if (winner) {
           const result = winner === slot.home ? "home" : "away";
-          if (result !== slot.result) { slot.result = result; knockoutResultsUpdated++; }
+          if (result !== slot.result) {
+            slot.result = result;
+            knockoutResultsUpdated++;
+          }
         }
-      }
-    });
-
-    const updatedKnockoutMatches = Object.values(koById);
+      });
 
     if (groupUpdated > 0) await sbSet("wc_group_matches", updatedGroupMatches);
-    if (knockoutTeamsUpdated > 0 || knockoutResultsUpdated > 0) await sbSet("wc_knockout_matches", updatedKnockoutMatches);
+    if (knockoutResultsUpdated > 0) await sbSet("wc_knockout_matches", Object.values(koById));
 
-    const total = groupUpdated + knockoutTeamsUpdated + knockoutResultsUpdated;
-    return res.status(200).json({ success: true, groupUpdated, knockoutTeamsUpdated, knockoutResultsUpdated, total });
+    const total = groupUpdated + knockoutResultsUpdated;
+    console.log(`sync-scores: ${total} updates (group=${groupUpdated}, ko_results=${knockoutResultsUpdated})`);
+
+    return res.status(200).json({
+      success: true,
+      groupUpdated,
+      knockoutResultsUpdated,
+      total,
+    });
   } catch (err) {
     console.error("sync-scores error:", err);
     return res.status(500).json({ error: err.message });
