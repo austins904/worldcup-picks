@@ -1894,7 +1894,7 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
           <LeaderboardTab allPlayers={players} allPicks={picks} allMatches={allMatches} currentPlayer="" isCommissioner={true} groupPicksLocked={groupPicksLocked} paid={paid} onMatchesReloaded={onMatchesReloaded} lastUpdated={lastUpdated ? (() => { const d = new Date(lastUpdated); const now = new Date(); const diffMins = Math.floor((now - d) / 60000); if (diffMins < 1) return "just now"; if (diffMins < 60) return `${diffMins}m ago`; const diffHrs = Math.floor(diffMins / 60); return diffHrs < 24 ? `${diffHrs}h ago` : d.toLocaleDateString(); })() : null} />
         )}
         {activeTab === "players" && (
-          <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} paid={paid} onTogglePaid={onTogglePaid} onResetPin={onResetPin} onRenamePlayer={onRenamePlayer} onRemovePlayer={onRemovePlayer} />
+          <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} paid={paid} onTogglePaid={onTogglePaid} onResetPin={onResetPin} onRenamePlayer={onRenamePlayer} onRemovePlayer={onRemovePlayer} knockoutMatches={knockoutMatches} knockoutOpen={knockoutOpen} />
         )}
         {activeTab === "announcement" && (
           <CommAnnouncement announcement={announcement} onSetAnnouncement={onSetAnnouncement} />
@@ -2151,13 +2151,21 @@ function CommAnnouncement({ announcement, onSetAnnouncement }) {
   );
 }
 
-function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onResetPin, onRenamePlayer, onRemovePlayer }) {
+function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onResetPin, onRenamePlayer, onRemovePlayer, knockoutMatches, knockoutOpen }) {
   const [newName, setNewName] = useState("");
   const [editingName, setEditingName] = useState(null);
   const [editVal, setEditVal] = useState("");
   const [editErr, setEditErr] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(null);
   const locked = new Date() >= new Date("2026-06-11T19:00:00Z");
+
+  const totalKOMatches = knockoutMatches ? knockoutMatches.filter(m => m.home && m.away).length : 0;
+
+  const getKOPickCount = (playerName) => {
+    if (!knockoutMatches) return 0;
+    const playerPicks = picks[playerName] || {};
+    return knockoutMatches.filter(m => m.home && m.away && playerPicks[m.id]).length;
+  };
 
   const handleRename = (oldName) => {
     const trimmed = editVal.trim();
@@ -2277,8 +2285,18 @@ function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onRe
                 <span style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{p}</span>
                 <button onClick={() => { setEditingName(p); setEditVal(p); setEditErr(""); }} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 13, padding: 0 }} title="Rename">✏️</button>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 12, color: C.muted }}>{Object.keys(picks[p] || {}).length} picks</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, color: C.muted }}>{Object.keys(picks[p] || {}).length} group picks</span>
+                {knockoutOpen && totalKOMatches > 0 && (() => {
+                  const koPicks = getKOPickCount(p);
+                  const complete = koPicks === totalKOMatches;
+                  const none = koPicks === 0;
+                  return (
+                    <span style={{ fontSize: 12, fontWeight: 700, color: complete ? C.green : none ? C.red : C.gold }}>
+                      {complete ? "✅" : none ? "❌" : "⚠️"} {koPicks}/{totalKOMatches} KO picks
+                    </span>
+                  );
+                })()}
                 {pins[p] ? <span style={{ fontSize: 11, color: C.green, fontWeight: 600 }}>🔐 PIN set</span> : <span style={{ fontSize: 11, color: C.muted }}>No PIN</span>}
                 {pins[p] && <Btn small variant="danger" onClick={() => onResetPin(p)}>Reset PIN</Btn>}
                 {confirmRemove === p ? (
