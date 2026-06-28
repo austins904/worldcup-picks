@@ -786,6 +786,7 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(player);
   const [nameErr, setNameErr] = useState("");
+  const [viewingPlayer, setViewingPlayer] = useState(player);
 
   // Pick completion stats
   const totalGroupMatches = groupMatches.length;
@@ -916,7 +917,7 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
           <GroupPicksTab groupMatches={groupMatches} picks={picks} onPick={groupPicksLocked ? null : onPick} groupPicksLocked={groupPicksLocked} allPicks={allPicks} allPlayers={allPlayers} />
         )}
         {activeTab === "knockout" && (
-          <KnockoutPicksTab knockoutMatches={knockoutMatches} picks={picks} onPick={onPick} knockoutOpen={knockoutOpen} knockoutLocked={knockoutLocked} allPicks={allPicks} allPlayers={allPlayers} />
+          <KnockoutPicksTab knockoutMatches={knockoutMatches} picks={picks} onPick={onPick} knockoutOpen={knockoutOpen} knockoutLocked={knockoutLocked} allPicks={allPicks} allPlayers={allPlayers} currentPlayer={player} viewingPlayer={viewingPlayer} onSetViewingPlayer={setViewingPlayer} />
         )}
         {activeTab === "community" && (
           <CommunityPicksTab groupMatches={groupMatches} knockoutMatches={knockoutMatches} allPicks={allPicks} allPlayers={allPlayers} groupPicksLocked={groupPicksLocked} knockoutLocked={knockoutLocked} />
@@ -925,7 +926,8 @@ function PlayerView({ player, groupMatches, knockoutMatches, picks, allPlayers, 
           <CompareTab groupMatches={groupMatches} knockoutMatches={knockoutMatches} allPicks={allPicks} allPlayers={allPlayers} currentPlayer={player} groupPicksLocked={groupPicksLocked} knockoutLocked={knockoutLocked} />
         )}
         {activeTab === "leaderboard" && (
-          <LeaderboardTab allPlayers={allPlayers} allPicks={allPicks} allMatches={allMatches} currentPlayer={player} lastUpdated={lastUpdatedStr} isCommissioner={false} groupPicksLocked={groupPicksLocked} paid={paid} onMatchesReloaded={onMatchesReloaded} />
+          <LeaderboardTab allPlayers={allPlayers} allPicks={allPicks} allMatches={allMatches} currentPlayer={player} lastUpdated={lastUpdatedStr} isCommissioner={false} groupPicksLocked={groupPicksLocked} paid={paid} onMatchesReloaded={onMatchesReloaded} knockoutLocked={knockoutLocked}
+            onViewBracket={(playerName) => { setViewingPlayer(playerName); setActiveTab("knockout"); }} />
         )}
       </div>
     </div>
@@ -1018,7 +1020,7 @@ function GroupPicksTab({ groupMatches, picks, onPick, groupPicksLocked, allPicks
 
 // Knockout picks tab
 // ── KNOCKOUT BRACKET ───────────────────────────────────────────────────────
-function KnockoutPicksTab({ knockoutMatches, picks, onPick, knockoutOpen, knockoutLocked, allPicks, allPlayers }) {
+function KnockoutPicksTab({ knockoutMatches, picks, onPick, knockoutOpen, knockoutLocked, allPicks, allPlayers, currentPlayer, viewingPlayer, onSetViewingPlayer }) {
   if (!knockoutOpen) return (
     <div style={{ textAlign: "center", padding: 60 }}>
       <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
@@ -1033,6 +1035,22 @@ function KnockoutPicksTab({ knockoutMatches, picks, onPick, knockoutOpen, knocko
   }, 0);
   const totalMatches = 31;
 
+  // Comparison mode — which players are selected to compare
+  const [compareSelected, setCompareSelected] = useState([]);
+  const toggleCompare = (name) => {
+    setCompareSelected(prev => prev.includes(name) ? prev.filter(p => p !== name) : [...prev, name]);
+  };
+
+  const comparePlayers = knockoutLocked ? [currentPlayer, ...compareSelected.filter(p => p !== currentPlayer)] : [];
+  const showCompareBracket = comparePlayers.length === 2;
+  const showCompareList = comparePlayers.length > 2;
+
+  // The picks to show in bracket — viewing another player or own
+  const displayedPicks = viewingPlayer && viewingPlayer !== currentPlayer
+    ? (allPicks[viewingPlayer] || {})
+    : picks;
+  const displayedPlayer = viewingPlayer || currentPlayer;
+
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
@@ -1043,7 +1061,188 @@ function KnockoutPicksTab({ knockoutMatches, picks, onPick, knockoutOpen, knocko
         }
         <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>R32=3pts · R16=5pts · QF=7pts · SF=10pts · Final=15pts</div>
       </div>
-      <BracketView knockoutMatches={knockoutMatches} picks={picks} onPick={knockoutLocked ? null : onPick} />
+
+      {/* View another player's bracket */}
+      {knockoutLocked && (
+        <div style={{ marginBottom: 16, padding: "12px 16px", background: C.card, borderRadius: 10, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 12, color: C.muted, fontWeight: 600, letterSpacing: 1, marginBottom: 8 }}>VIEWING BRACKET:</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            <button onClick={() => onSetViewingPlayer(currentPlayer)} style={{
+              padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer",
+              background: displayedPlayer === currentPlayer ? `${C.accent}22` : "transparent",
+              border: `1.5px solid ${displayedPlayer === currentPlayer ? C.accent : C.border}`,
+              color: displayedPlayer === currentPlayer ? C.accent : C.muted, fontFamily: "Inter, sans-serif",
+            }}>You</button>
+            {allPlayers.filter(p => p !== currentPlayer).map(p => (
+              <button key={p} onClick={() => onSetViewingPlayer(p)} style={{
+                padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                background: displayedPlayer === p ? `${C.gold}22` : "transparent",
+                border: `1.5px solid ${displayedPlayer === p ? C.gold : C.border}`,
+                color: displayedPlayer === p ? C.gold : C.muted, fontFamily: "Inter, sans-serif",
+              }}>{p.split(" ")[0]}</button>
+            ))}
+          </div>
+          {displayedPlayer !== currentPlayer && (
+            <div style={{ fontSize: 11, color: C.gold, marginTop: 6, fontWeight: 600 }}>Viewing {displayedPlayer}'s bracket (read-only)</div>
+          )}
+        </div>
+      )}
+
+      {/* Compare selector */}
+      {knockoutLocked && (
+        <div style={{ marginBottom: 16, padding: "12px 16px", background: C.card, borderRadius: 10, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 12, color: C.muted, fontWeight: 600, letterSpacing: 1, marginBottom: 8 }}>
+            COMPARE WITH: <span style={{ color: C.textDim, fontWeight: 400 }}>{compareSelected.length === 0 ? "select players below" : compareSelected.length === 1 ? "showing bracket overlay" : "showing list view"}</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {allPlayers.filter(p => p !== currentPlayer).map(p => (
+              <button key={p} onClick={() => toggleCompare(p)} style={{
+                padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                background: compareSelected.includes(p) ? `${C.accent}22` : "transparent",
+                border: `1.5px solid ${compareSelected.includes(p) ? C.accent : C.border}`,
+                color: compareSelected.includes(p) ? C.accent : C.muted, fontFamily: "Inter, sans-serif",
+              }}>{p.split(" ")[0]}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Bracket or comparison view */}
+      {showCompareList ? (
+        <KnockoutCompareList knockoutMatches={knockoutMatches} allPicks={allPicks} comparePlayers={comparePlayers} />
+      ) : showCompareBracket ? (
+        <KnockoutBracketOverlay knockoutMatches={knockoutMatches} playerA={comparePlayers[0]} playerB={comparePlayers[1]} allPicks={allPicks} />
+      ) : (
+        <BracketView knockoutMatches={knockoutMatches} picks={displayedPicks} onPick={knockoutLocked || displayedPlayer !== currentPlayer ? null : onPick} />
+      )}
+    </div>
+  );
+}
+
+// ── BRACKET OVERLAY (2 players) ────────────────────────────────────────────
+function KnockoutBracketOverlay({ knockoutMatches, playerA, playerB, allPicks }) {
+  const picksA = allPicks[playerA] || {};
+  const picksB = allPicks[playerB] || {};
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 16, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ width: 12, height: 12, borderRadius: 3, background: C.accent }} />
+          <span style={{ fontSize: 12, color: C.accent, fontWeight: 700 }}>{playerA} (you)</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ width: 12, height: 12, borderRadius: 3, background: C.gold }} />
+          <span style={{ fontSize: 12, color: C.gold, fontWeight: 700 }}>{playerB}</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ width: 12, height: 12, borderRadius: 3, background: C.green }} />
+          <span style={{ fontSize: 12, color: C.green, fontWeight: 700 }}>Both agree</span>
+        </div>
+      </div>
+      <div style={{ overflowX: "auto", paddingBottom: 16 }}>
+        <div style={{ minWidth: 900 }}>
+          {KNOCKOUT_ROUNDS.map(({ round, label, pts }) => {
+            const rMatches = knockoutMatches.filter(m => m.round === round && m.home && m.away);
+            if (rMatches.length === 0) return null;
+            return (
+              <div key={round} style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, color: C.gold, letterSpacing: 2 }}>{label}</span>
+                  <Badge color={C.accentDim}>{pts} pts</Badge>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {rMatches.map(m => {
+                    const winnerA = getPickedWinner(m.id, picksA, knockoutMatches);
+                    const winnerB = getPickedWinner(m.id, picksB, knockoutMatches);
+                    const actualWinner = getActualWinner(m.id, knockoutMatches);
+                    const agree = winnerA && winnerB && winnerA === winnerB;
+                    const borderColor = agree ? C.green : C.border;
+                    return (
+                      <div key={m.id} style={{ display: "flex", gap: 8, alignItems: "center", background: C.card, borderRadius: 8, padding: "8px 12px", border: `1px solid ${borderColor}` }}>
+                        <span style={{ fontSize: 12, color: C.textDim, flex: 1, minWidth: 120 }}>
+                          {f(m.home)} {m.home.split(" ")[0]} vs {f(m.away)} {m.away.split(" ")[0]}
+                          {actualWinner && <span style={{ color: C.green, marginLeft: 6 }}>→ {f(actualWinner)} {actualWinner}</span>}
+                        </span>
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                          {[{ player: playerA, winner: winnerA, color: agree ? C.green : C.accent },
+                            { player: playerB, winner: winnerB, color: agree ? C.green : C.gold }].map(({ player, winner, color }) => {
+                            const correct = actualWinner && winner === actualWinner;
+                            const wrong = actualWinner && winner && winner !== actualWinner;
+                            return (
+                              <div key={player} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: `${color}22`, border: `1.5px solid ${correct ? C.green : wrong ? C.red : color}55`, color: correct ? C.green : wrong ? C.red : color, minWidth: 70, textAlign: "center" }}>
+                                {winner ? `${f(winner)} ${winner.split(" ")[0]}` : "—"}
+                                {correct ? " ✅" : wrong ? " ❌" : ""}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── KNOCKOUT COMPARE LIST (3+ players) ─────────────────────────────────────
+function KnockoutCompareList({ knockoutMatches, allPicks, comparePlayers }) {
+  return (
+    <div style={{ overflowX: "auto" }}>
+      {KNOCKOUT_ROUNDS.map(({ round, label, pts }) => {
+        const rMatches = knockoutMatches.filter(m => m.round === round && m.home && m.away);
+        if (rMatches.length === 0) return null;
+        return (
+          <div key={round} style={{ marginBottom: 24 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, color: C.gold, letterSpacing: 2 }}>{label}</span>
+              <Badge color={C.accentDim}>{pts} pts</Badge>
+            </div>
+            {/* Header */}
+            <div style={{ display: "flex", gap: 4, marginBottom: 4, minWidth: 400 }}>
+              <div style={{ width: 130, flexShrink: 0, fontSize: 11, color: C.muted, fontWeight: 600 }}>MATCH</div>
+              {comparePlayers.map((p, i) => (
+                <div key={p} style={{ flex: 1, minWidth: 65, fontSize: 11, color: i === 0 ? C.accent : C.textDim, fontWeight: 700, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {i === 0 ? "YOU" : p.split(" ")[0].toUpperCase()}
+                </div>
+              ))}
+            </div>
+            {rMatches.map(m => {
+              const actualWinner = getActualWinner(m.id, knockoutMatches);
+              return (
+                <div key={m.id} style={{ display: "flex", gap: 4, marginBottom: 4, minWidth: 400, alignItems: "center" }}>
+                  <div style={{ width: 130, flexShrink: 0, fontSize: 11, color: C.textDim }}>
+                    {f(m.home)} {m.home.split(" ")[0]} vs {f(m.away)} {m.away.split(" ")[0]}
+                    {actualWinner && <span style={{ color: C.green, fontSize: 10, marginLeft: 4 }}>✓</span>}
+                  </div>
+                  {comparePlayers.map((p, i) => {
+                    const winner = getPickedWinner(m.id, allPicks[p] || {}, knockoutMatches);
+                    const correct = actualWinner && winner === actualWinner;
+                    const wrong = actualWinner && winner && winner !== actualWinner;
+                    return (
+                      <div key={p} style={{
+                        flex: 1, minWidth: 65, textAlign: "center", padding: "4px 2px",
+                        background: correct ? `${C.green}20` : wrong ? `${C.red}15` : C.card,
+                        borderRadius: 6, border: `1px solid ${correct ? C.green + "44" : wrong ? C.red + "33" : C.border}`,
+                        fontSize: 10, fontWeight: 700,
+                        color: correct ? C.green : wrong ? C.red : i === 0 ? C.accent : C.textDim,
+                      }}>
+                        {winner ? `${f(winner)} ${winner.split(" ")[0]}` : "—"}
+                        {correct ? " ✅" : wrong ? " ❌" : ""}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1646,12 +1845,20 @@ function getMostPopularWrongPick(allMatches, allPicks, allPlayers) {
 }
 
 // Leaderboard
-function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastUpdated, isCommissioner, groupPicksLocked, paid, onMatchesReloaded }) {
+function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastUpdated, isCommissioner, groupPicksLocked, paid, onMatchesReloaded, knockoutLocked, onViewBracket }) {
   const [expandedPlayer, setExpandedPlayer] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState(null);
   const knockoutMatches = allMatches.filter(m => m.stage === "knockout");
   const anyResults = allMatches.some(m => m.result);
+
+  // Get the team a player picked to win the Final
+  const getChampionPick = (playerName) => {
+    const finalMatch = knockoutMatches.find(m => m.round === "F");
+    if (!finalMatch) return null;
+    const playerPicks = allPicks[playerName] || {};
+    return getPickedWinner(finalMatch.id, playerPicks, knockoutMatches);
+  };
 
   // Payout calc
   const paidCount = paid ? allPlayers.filter(p => paid[p]).length : 0;
@@ -1785,8 +1992,17 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastU
             {isTied && medal && (
               <span style={{ fontSize: 10, color: C.gold, fontWeight: 700, marginLeft: -12 }}>T</span>
             )}
-            <span style={{ flex: 1, fontWeight: 600, fontSize: 15, color: p.name === currentPlayer ? C.accent : C.text }}>
-              {p.name}{p.name === currentPlayer ? " (you)" : ""}
+            <span style={{ flex: 1, fontWeight: 600, fontSize: 15, color: p.name === currentPlayer ? C.accent : C.text, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {p.name}{p.name === currentPlayer ? " (you)" : ""}
+              </span>
+              {knockoutLocked && (() => {
+                const champ = getChampionPick(p.name);
+                return champ ? <span style={{ fontSize: 16, flexShrink: 0 }} title={champ}>{f(champ)}</span> : null;
+              })()}
+              {knockoutLocked && onViewBracket && p.name !== currentPlayer && (
+                <button onClick={e => { e.stopPropagation(); onViewBracket(p.name); }} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "1px 7px", fontSize: 10, color: C.muted, cursor: "pointer", fontFamily: "Inter, sans-serif", fontWeight: 600, flexShrink: 0 }}>bracket</button>
+              )}
             </span>
             {anyResults && (
               <span style={{ fontSize: 11, color: C.muted }}>max {p.maxPts}</span>
@@ -1891,7 +2107,7 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
           />
         )}
         {activeTab === "leaderboard" && (
-          <LeaderboardTab allPlayers={players} allPicks={picks} allMatches={allMatches} currentPlayer="" isCommissioner={true} groupPicksLocked={groupPicksLocked} paid={paid} onMatchesReloaded={onMatchesReloaded} lastUpdated={lastUpdated ? (() => { const d = new Date(lastUpdated); const now = new Date(); const diffMins = Math.floor((now - d) / 60000); if (diffMins < 1) return "just now"; if (diffMins < 60) return `${diffMins}m ago`; const diffHrs = Math.floor(diffMins / 60); return diffHrs < 24 ? `${diffHrs}h ago` : d.toLocaleDateString(); })() : null} />
+          <LeaderboardTab allPlayers={players} allPicks={picks} allMatches={allMatches} currentPlayer="" isCommissioner={true} groupPicksLocked={groupPicksLocked} paid={paid} onMatchesReloaded={onMatchesReloaded} knockoutLocked={knockoutLocked} lastUpdated={lastUpdated ? (() => { const d = new Date(lastUpdated); const now = new Date(); const diffMins = Math.floor((now - d) / 60000); if (diffMins < 1) return "just now"; if (diffMins < 60) return `${diffMins}m ago`; const diffHrs = Math.floor(diffMins / 60); return diffHrs < 24 ? `${diffHrs}h ago` : d.toLocaleDateString(); })() : null} />
         )}
         {activeTab === "players" && (
           <CommPlayers players={players} picks={picks} addPlayer={addPlayer} pins={pins} paid={paid} onTogglePaid={onTogglePaid} onResetPin={onResetPin} onRenamePlayer={onRenamePlayer} onRemovePlayer={onRemovePlayer} knockoutMatches={knockoutMatches} knockoutOpen={knockoutOpen} />
@@ -2159,12 +2375,12 @@ function CommPlayers({ players, picks, addPlayer, pins, paid, onTogglePaid, onRe
   const [confirmRemove, setConfirmRemove] = useState(null);
   const locked = new Date() >= new Date("2026-06-11T19:00:00Z");
 
-  const totalKOMatches = knockoutMatches ? knockoutMatches.filter(m => m.home && m.away).length : 0;
+  const totalKOMatches = 31;
 
   const getKOPickCount = (playerName) => {
     if (!knockoutMatches) return 0;
     const playerPicks = picks[playerName] || {};
-    return knockoutMatches.filter(m => m.home && m.away && playerPicks[m.id]).length;
+    return knockoutMatches.filter(m => m.round && playerPicks[m.id]).length;
   };
 
   const handleRename = (oldName) => {
