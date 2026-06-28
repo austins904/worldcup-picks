@@ -507,6 +507,7 @@ export default function App() {
       }}
       onOpenKnockout={() => setKnockoutOpen(true)}
       onLockKnockout={() => setKnockoutLocked(true)}
+      onUnlockKnockout={() => { setKnockoutLocked(false); }}
       onLockGroupPicks={() => setGroupLocked(true)}
       onRenamePlayer={(oldName, newName) => {
         // Update players list
@@ -1824,7 +1825,7 @@ function LeaderboardTab({ allPlayers, allPicks, allMatches, currentPlayer, lastU
 }
 
 // ── COMMISSIONER VIEW ──────────────────────────────────────────────────────
-function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, groupLocked, groupPicksLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onLockGroupPicks, onRenamePlayer, onRemovePlayer, onLogout, activeTab, setActiveTab, addPlayer, pins, paid, onTogglePaid, onResetPin, lastUpdated, announcement, onSetAnnouncement, onMatchesReloaded }) {
+function CommissionerView({ players, groupMatches, knockoutMatches, picks, knockoutOpen, knockoutLocked, groupLocked, groupPicksLocked, allMatches, onSetGroupResult, onSetKnockoutTeams, onSetKnockoutResult, onOpenKnockout, onLockKnockout, onUnlockKnockout, onLockGroupPicks, onRenamePlayer, onRemovePlayer, onLogout, activeTab, setActiveTab, addPlayer, pins, paid, onTogglePaid, onResetPin, lastUpdated, announcement, onSetAnnouncement, onMatchesReloaded }) {
 
   const tabs = [
     { id: "groups", label: "Group Results" },
@@ -1882,6 +1883,7 @@ function CommissionerView({ players, groupMatches, knockoutMatches, picks, knock
             onSetResult={onSetKnockoutResult}
             onOpen={onOpenKnockout}
             onLock={onLockKnockout}
+            onUnlock={onUnlockKnockout}
             onMatchesFilled={async () => {
               const km = await loadState("wc_knockout_matches");
               if (km) onMatchesReloaded(null, km, null);
@@ -1966,7 +1968,7 @@ function CommMatchResultRow({ match, onSetResult, allowDraw }) {
   );
 }
 
-function CommKnockout({ knockoutMatches, knockoutOpen, knockoutLocked, onSetTeams, onSetResult, onOpen, onLock, onMatchesFilled }) {
+function CommKnockout({ knockoutMatches, knockoutOpen, knockoutLocked, onSetTeams, onSetResult, onOpen, onLock, onUnlock, onMatchesFilled }) {
   const [filling, setFilling] = useState(false);
   const [fillMsg, setFillMsg] = useState(null);
 
@@ -2006,7 +2008,15 @@ function CommKnockout({ knockoutMatches, knockoutOpen, knockoutLocked, onSetTeam
             <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>Lock before Round of 32 kicks off.</div>
           </div>
         )}
-        {knockoutLocked && <Badge color={C.red}>PICKS LOCKED</Badge>}
+        {knockoutLocked && (
+          <div>
+            <Badge color={C.red}>PICKS LOCKED</Badge>
+            <div style={{ marginTop: 8 }}>
+              <Btn variant="ghost" small onClick={onUnlock}>Unlock Knockout Picks</Btn>
+            </div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>Unlocks picks so players can edit their bracket.</div>
+          </div>
+        )}
         {knockoutOpen && !knockoutLocked && <Badge color={C.green}>PICKS OPEN</Badge>}
 
         {/* Auto-fill button */}
