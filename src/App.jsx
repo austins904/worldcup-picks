@@ -108,46 +108,67 @@ function generateGroupMatches() {
 }
 
 // Knockout rounds (teams TBD — filled in by commissioner)
-// ── Knockout match schedule (ET times) ────────────────────────────────────
-// Keyed by match ID (R32-1 through F-1), ordered by FIFA bracket slot
-const KNOCKOUT_SCHEDULE = {
-  // Round of 32 (June 28 - July 3)
-  "R32-1":  { date: "Sun Jun 28", time: "3:00 PM ET",  venue: "Los Angeles" },
-  "R32-2":  { date: "Mon Jun 29", time: "1:00 PM ET",  venue: "Houston" },
-  "R32-3":  { date: "Mon Jun 29", time: "4:30 PM ET",  venue: "Boston" },
-  "R32-4":  { date: "Mon Jun 29", time: "9:00 PM ET",  venue: "Monterrey" },
-  "R32-5":  { date: "Tue Jun 30", time: "1:00 PM ET",  venue: "Dallas" },
-  "R32-6":  { date: "Tue Jun 30", time: "5:00 PM ET",  venue: "New York/NJ" },
-  "R32-7":  { date: "Tue Jun 30", time: "9:00 PM ET",  venue: "Mexico City" },
-  "R32-8":  { date: "Wed Jul 1",  time: "12:00 PM ET", venue: "Atlanta" },
-  "R32-9":  { date: "Wed Jul 1",  time: "4:00 PM ET",  venue: "Seattle" },
-  "R32-10": { date: "Wed Jul 1",  time: "8:00 PM ET",  venue: "San Francisco" },
-  "R32-11": { date: "Thu Jul 2",  time: "12:00 PM ET", venue: "Los Angeles" },
-  "R32-12": { date: "Thu Jul 2",  time: "7:00 PM ET",  venue: "Toronto" },
-  "R32-13": { date: "Thu Jul 2",  time: "8:00 PM ET",  venue: "Vancouver" },
-  "R32-14": { date: "Fri Jul 3",  time: "1:00 PM ET",  venue: "Dallas" },
-  "R32-15": { date: "Fri Jul 3",  time: "6:00 PM ET",  venue: "Miami" },
-  "R32-16": { date: "Fri Jul 3",  time: "8:30 PM ET",  venue: "Kansas City" },
-  // Round of 16 (July 4 - 7)
-  "R16-1":  { date: "Fri Jul 4",  time: "1:00 PM ET",  venue: "Houston" },
-  "R16-2":  { date: "Fri Jul 4",  time: "5:00 PM ET",  venue: "Philadelphia" },
-  "R16-3":  { date: "Sat Jul 5",  time: "4:00 PM ET",  venue: "New York/NJ" },
-  "R16-4":  { date: "Sat Jul 5",  time: "8:00 PM ET",  venue: "Los Angeles" },
-  "R16-5":  { date: "Sun Jul 6",  time: "2:00 PM ET",  venue: "Boston" },
-  "R16-6":  { date: "Sun Jul 6",  time: "6:00 PM ET",  venue: "Seattle" },
-  "R16-7":  { date: "Mon Jul 7",  time: "2:00 PM ET",  venue: "Atlanta" },
-  "R16-8":  { date: "Mon Jul 7",  time: "4:00 PM ET",  venue: "Vancouver" },
-  // Quarterfinals (July 9 - 11)
-  "QF-1":   { date: "Wed Jul 9",  time: "4:00 PM ET",  venue: "Boston" },
-  "QF-2":   { date: "Thu Jul 10", time: "3:00 PM ET",  venue: "Los Angeles" },
-  "QF-3":   { date: "Fri Jul 11", time: "5:00 PM ET",  venue: "Miami" },
-  "QF-4":   { date: "Fri Jul 11", time: "9:00 PM ET",  venue: "Kansas City" },
-  // Semifinals (July 14 - 15)
-  "SF-1":   { date: "Mon Jul 14", time: "3:00 PM ET",  venue: "Dallas" },
-  "SF-2":   { date: "Tue Jul 15", time: "3:00 PM ET",  venue: "Atlanta" },
-  // Final (July 19)
-  "F-1":    { date: "Sun Jul 19", time: "3:00 PM ET",  venue: "New York/NJ" },
+// ── Knockout match schedule (ET) — looked up by team pair, not slot ───────
+const MATCH_SCHEDULE = [
+  // Round of 32 (June 28 – July 3)
+  { teams: ["South Africa", "Canada"],           date: "Sun Jun 28", time: "3:00 PM ET" },
+  { teams: ["Brazil", "Japan"],                  date: "Mon Jun 29", time: "1:00 PM ET" },
+  { teams: ["Germany", "Paraguay"],              date: "Mon Jun 29", time: "4:30 PM ET" },
+  { teams: ["Netherlands", "Morocco"],           date: "Mon Jun 29", time: "9:00 PM ET" },
+  { teams: ["Ivory Coast", "Norway"],            date: "Tue Jun 30", time: "1:00 PM ET" },
+  { teams: ["France", "Sweden"],                 date: "Tue Jun 30", time: "5:00 PM ET" },
+  { teams: ["Mexico", "Ecuador"],                date: "Tue Jun 30", time: "9:00 PM ET" },
+  { teams: ["England", "DR Congo"],              date: "Wed Jul 1",  time: "12:00 PM ET" },
+  { teams: ["Belgium", "Senegal"],               date: "Wed Jul 1",  time: "4:00 PM ET" },
+  { teams: ["USA", "Bosnia-Herzegovina"],        date: "Wed Jul 1",  time: "8:00 PM ET" },
+  { teams: ["Spain", "Austria"],                 date: "Thu Jul 2",  time: "3:00 PM ET" },
+  { teams: ["Portugal", "Croatia"],              date: "Thu Jul 2",  time: "7:00 PM ET" },
+  { teams: ["Switzerland", "Algeria"],           date: "Thu Jul 2",  time: "11:00 PM ET" },
+  { teams: ["Australia", "Egypt"],               date: "Fri Jul 3",  time: "2:00 PM ET" },
+  { teams: ["Argentina", "Cape Verde"],          date: "Fri Jul 3",  time: "6:00 PM ET" },
+  { teams: ["Colombia", "Ghana"],                date: "Fri Jul 3",  time: "9:30 PM ET" },
+  // Round of 16 (July 4 – 7) — confirmed matchups
+  { teams: ["Canada", "Morocco"],                date: "Sat Jul 4",  time: "1:00 PM ET" },
+  { teams: ["Paraguay", "France"],               date: "Sat Jul 4",  time: "5:00 PM ET" },
+  { teams: ["Brazil", "Norway"],                 date: "Sun Jul 5",  time: "4:00 PM ET" },
+  { teams: ["Mexico", "England"],                date: "Sun Jul 5",  time: "8:00 PM ET" },
+  { teams: ["Spain", "Portugal"],                date: "Mon Jul 6",  time: "3:00 PM ET" },
+  { teams: ["Spain", "Croatia"],                 date: "Mon Jul 6",  time: "3:00 PM ET" },
+  { teams: ["Austria", "Portugal"],              date: "Mon Jul 6",  time: "3:00 PM ET" },
+  { teams: ["Austria", "Croatia"],               date: "Mon Jul 6",  time: "3:00 PM ET" },
+  { teams: ["Belgium", "USA"],                   date: "Mon Jul 6",  time: "8:00 PM ET" },
+  { teams: ["Belgium", "Bosnia-Herzegovina"],    date: "Mon Jul 6",  time: "8:00 PM ET" },
+  { teams: ["Senegal", "USA"],                   date: "Mon Jul 6",  time: "8:00 PM ET" },
+  { teams: ["Senegal", "Bosnia-Herzegovina"],    date: "Mon Jul 6",  time: "8:00 PM ET" },
+  { teams: ["Argentina", "Australia"],           date: "Tue Jul 7",  time: "12:00 PM ET" },
+  { teams: ["Argentina", "Egypt"],               date: "Tue Jul 7",  time: "12:00 PM ET" },
+  { teams: ["Cape Verde", "Australia"],          date: "Tue Jul 7",  time: "12:00 PM ET" },
+  { teams: ["Cape Verde", "Egypt"],              date: "Tue Jul 7",  time: "12:00 PM ET" },
+  { teams: ["Switzerland", "Colombia"],          date: "Tue Jul 7",  time: "4:00 PM ET" },
+  { teams: ["Switzerland", "Ghana"],             date: "Tue Jul 7",  time: "4:00 PM ET" },
+  { teams: ["Algeria", "Colombia"],              date: "Tue Jul 7",  time: "4:00 PM ET" },
+  { teams: ["Algeria", "Ghana"],                 date: "Tue Jul 7",  time: "4:00 PM ET" },
+];
+
+// Round-level fallback dates when a specific matchup isn't in the list yet
+const ROUND_DATES = {
+  R32: "Jun 28 – Jul 3",
+  R16: "Jul 4 – 7",
+  QF:  "Jul 9 – 11",
+  SF:  "Jul 14 – 15",
+  F:   "Sun Jul 19 · 3:00 PM ET",
 };
+
+function getMatchSchedule(teamA, teamB, round) {
+  if (teamA && teamB) {
+    const hit = MATCH_SCHEDULE.find(s =>
+      (s.teams[0] === teamA && s.teams[1] === teamB) ||
+      (s.teams[0] === teamB && s.teams[1] === teamA)
+    );
+    if (hit) return { date: hit.date, time: hit.time };
+  }
+  return round && ROUND_DATES[round] ? { date: ROUND_DATES[round], time: null } : null;
+}
 
 const KNOCKOUT_ROUNDS = [
   { round: "R32", label: "Round of 32", matchCount: 16 },
@@ -1427,7 +1448,7 @@ function BracketMatch({ match, picks, onPick, knockoutMatches, isFinal }) {
     );
   };
 
-  const schedule = KNOCKOUT_SCHEDULE[match.id];
+  const schedule = getMatchSchedule(teamA, teamB, match.round);
 
   return (
     <div style={{
@@ -1442,7 +1463,7 @@ function BracketMatch({ match, picks, onPick, knockoutMatches, isFinal }) {
       {schedule && (
         <div style={{ padding: "3px 6px", background: C.surface, borderBottom: `1px solid ${C.border}` }}>
           <div style={{ fontSize: 9, color: C.muted, fontWeight: 700, lineHeight: 1.3 }}>{schedule.date}</div>
-          <div style={{ fontSize: 9, color: C.accentDim, fontWeight: 700 }}>{schedule.time}</div>
+          {schedule.time && <div style={{ fontSize: 9, color: C.accentDim, fontWeight: 700 }}>{schedule.time}</div>}
         </div>
       )}
       <TeamRow team={teamA} isHome={true} />
@@ -2350,7 +2371,7 @@ function CommSetTeamsSection({ round, label, knockoutMatches, onSetTeams, onSetR
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: m.home ? C.text : C.muted }}>
                 {m.home ? `${f(m.home)} ${m.home}` : "TBD"} <span style={{ color: C.muted, fontWeight: 400 }}>vs</span> {m.away ? `${f(m.away)} ${m.away}` : "TBD"}
-                {KNOCKOUT_SCHEDULE[m.id] && <span style={{ fontSize: 11, color: C.muted, fontWeight: 400, marginLeft: 8 }}>{KNOCKOUT_SCHEDULE[m.id].date} · {KNOCKOUT_SCHEDULE[m.id].time}</span>}
+                {(() => { const s = getMatchSchedule(m.home, m.away, m.round); return s && s.time ? <span style={{ fontSize: 11, color: C.muted, fontWeight: 400, marginLeft: 8 }}>{s.date} · {s.time}</span> : null; })()}
               </span>
               <Btn small variant="ghost" onClick={() => { setEditId(m.id); setHomeVal(m.home || ""); setAwayVal(m.away || ""); }}>Set Teams</Btn>
               {m.home && m.away && (
