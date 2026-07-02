@@ -108,6 +108,47 @@ function generateGroupMatches() {
 }
 
 // Knockout rounds (teams TBD — filled in by commissioner)
+// ── Knockout match schedule (ET times) ────────────────────────────────────
+// Keyed by match ID (R32-1 through F-1), ordered by FIFA bracket slot
+const KNOCKOUT_SCHEDULE = {
+  // Round of 32 (June 28 - July 3)
+  "R32-1":  { date: "Sun Jun 28", time: "3:00 PM ET",  venue: "Los Angeles" },
+  "R32-2":  { date: "Mon Jun 29", time: "1:00 PM ET",  venue: "Houston" },
+  "R32-3":  { date: "Mon Jun 29", time: "4:30 PM ET",  venue: "Boston" },
+  "R32-4":  { date: "Mon Jun 29", time: "9:00 PM ET",  venue: "Monterrey" },
+  "R32-5":  { date: "Tue Jun 30", time: "1:00 PM ET",  venue: "Dallas" },
+  "R32-6":  { date: "Tue Jun 30", time: "5:00 PM ET",  venue: "New York/NJ" },
+  "R32-7":  { date: "Tue Jun 30", time: "9:00 PM ET",  venue: "Mexico City" },
+  "R32-8":  { date: "Wed Jul 1",  time: "12:00 PM ET", venue: "Atlanta" },
+  "R32-9":  { date: "Wed Jul 1",  time: "4:00 PM ET",  venue: "Seattle" },
+  "R32-10": { date: "Wed Jul 1",  time: "8:00 PM ET",  venue: "San Francisco" },
+  "R32-11": { date: "Thu Jul 2",  time: "12:00 PM ET", venue: "Los Angeles" },
+  "R32-12": { date: "Thu Jul 2",  time: "7:00 PM ET",  venue: "Toronto" },
+  "R32-13": { date: "Thu Jul 2",  time: "8:00 PM ET",  venue: "Vancouver" },
+  "R32-14": { date: "Fri Jul 3",  time: "1:00 PM ET",  venue: "Dallas" },
+  "R32-15": { date: "Fri Jul 3",  time: "6:00 PM ET",  venue: "Miami" },
+  "R32-16": { date: "Fri Jul 3",  time: "8:30 PM ET",  venue: "Kansas City" },
+  // Round of 16 (July 4 - 7)
+  "R16-1":  { date: "Fri Jul 4",  time: "1:00 PM ET",  venue: "Houston" },
+  "R16-2":  { date: "Fri Jul 4",  time: "5:00 PM ET",  venue: "Philadelphia" },
+  "R16-3":  { date: "Sat Jul 5",  time: "4:00 PM ET",  venue: "New York/NJ" },
+  "R16-4":  { date: "Sat Jul 5",  time: "8:00 PM ET",  venue: "Los Angeles" },
+  "R16-5":  { date: "Sun Jul 6",  time: "2:00 PM ET",  venue: "Boston" },
+  "R16-6":  { date: "Sun Jul 6",  time: "6:00 PM ET",  venue: "Seattle" },
+  "R16-7":  { date: "Mon Jul 7",  time: "2:00 PM ET",  venue: "Atlanta" },
+  "R16-8":  { date: "Mon Jul 7",  time: "4:00 PM ET",  venue: "Vancouver" },
+  // Quarterfinals (July 9 - 11)
+  "QF-1":   { date: "Wed Jul 9",  time: "4:00 PM ET",  venue: "Boston" },
+  "QF-2":   { date: "Thu Jul 10", time: "3:00 PM ET",  venue: "Los Angeles" },
+  "QF-3":   { date: "Fri Jul 11", time: "5:00 PM ET",  venue: "Miami" },
+  "QF-4":   { date: "Fri Jul 11", time: "9:00 PM ET",  venue: "Kansas City" },
+  // Semifinals (July 14 - 15)
+  "SF-1":   { date: "Mon Jul 14", time: "3:00 PM ET",  venue: "Dallas" },
+  "SF-2":   { date: "Tue Jul 15", time: "3:00 PM ET",  venue: "Atlanta" },
+  // Final (July 19)
+  "F-1":    { date: "Sun Jul 19", time: "3:00 PM ET",  venue: "New York/NJ" },
+};
+
 const KNOCKOUT_ROUNDS = [
   { round: "R32", label: "Round of 32", matchCount: 16 },
   { round: "R16", label: "Round of 16", matchCount: 8 },
@@ -1329,15 +1370,24 @@ function BracketMatch({ match, picks, onPick, knockoutMatches, isFinal }) {
     teamA = match.home || null;
     teamB = match.away || null;
   } else if (feeds) {
-    teamA = getPickedWinner(feeds[0], picks, knockoutMatches) || null;
-    teamB = getPickedWinner(feeds[1], picks, knockoutMatches) || null;
+    // Prefer commissioner-set teams, then actual results, then the player's picked cascade
+    if (match.home && match.away) {
+      teamA = match.home;
+      teamB = match.away;
+    } else {
+      teamA = getActualWinner(feeds[0], knockoutMatches) || getPickedWinner(feeds[0], picks, knockoutMatches) || null;
+      teamB = getActualWinner(feeds[1], knockoutMatches) || getPickedWinner(feeds[1], picks, knockoutMatches) || null;
+    }
   }
 
-  const myPick = picks[match.id];
-  const pickedTeam = myPick === "home" ? teamA : myPick === "away" ? teamB : null;
+  // The player's picked winner comes from their pure pick cascade (may not be one of the displayed teams)
+  const pickedTeam = getPickedWinner(match.id, picks, knockoutMatches);
   const actualWinner = getActualWinner(match.id, knockoutMatches);
   const isCorrect = actualWinner && pickedTeam === actualWinner;
   const isWrong = actualWinner && pickedTeam && pickedTeam !== actualWinner;
+
+  // Is the player's picked team even in this displayed matchup?
+  const pickedTeamEliminated = pickedTeam && teamA && teamB && pickedTeam !== teamA && pickedTeam !== teamB;
 
   const handlePick = (team) => {
     if (!onPick || !team) return;
@@ -1377,9 +1427,11 @@ function BracketMatch({ match, picks, onPick, knockoutMatches, isFinal }) {
     );
   };
 
+  const schedule = KNOCKOUT_SCHEDULE[match.id];
+
   return (
     <div style={{
-      width: isFinal ? 110 : 105,
+      width: isFinal ? 120 : 110,
       background: C.card,
       border: `1px solid ${isCorrect ? C.green : isWrong ? C.red + "88" : C.border}`,
       borderRadius: 6,
@@ -1387,9 +1439,20 @@ function BracketMatch({ match, picks, onPick, knockoutMatches, isFinal }) {
       margin: "3px 0",
       flexShrink: 0,
     }}>
+      {schedule && (
+        <div style={{ padding: "3px 6px", background: C.surface, borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 9, color: C.muted, fontWeight: 700, lineHeight: 1.3 }}>{schedule.date}</div>
+          <div style={{ fontSize: 9, color: C.accentDim, fontWeight: 700 }}>{schedule.time}</div>
+        </div>
+      )}
       <TeamRow team={teamA} isHome={true} />
       <div style={{ height: 1, background: C.border }} />
       <TeamRow team={teamB} isHome={false} />
+      {pickedTeamEliminated && (
+        <div style={{ padding: "3px 6px", background: `${C.red}12`, borderTop: `1px solid ${C.border}`, fontSize: 9, color: C.red, fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}>
+          <span>Your pick:</span> <span>{f(pickedTeam)}</span> <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pickedTeam.length > 8 ? pickedTeam.split(" ").map(w => w[0]).join("") : pickedTeam}</span> <span>❌</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -2287,6 +2350,7 @@ function CommSetTeamsSection({ round, label, knockoutMatches, onSetTeams, onSetR
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: m.home ? C.text : C.muted }}>
                 {m.home ? `${f(m.home)} ${m.home}` : "TBD"} <span style={{ color: C.muted, fontWeight: 400 }}>vs</span> {m.away ? `${f(m.away)} ${m.away}` : "TBD"}
+                {KNOCKOUT_SCHEDULE[m.id] && <span style={{ fontSize: 11, color: C.muted, fontWeight: 400, marginLeft: 8 }}>{KNOCKOUT_SCHEDULE[m.id].date} · {KNOCKOUT_SCHEDULE[m.id].time}</span>}
               </span>
               <Btn small variant="ghost" onClick={() => { setEditId(m.id); setHomeVal(m.home || ""); setAwayVal(m.away || ""); }}>Set Teams</Btn>
               {m.home && m.away && (
